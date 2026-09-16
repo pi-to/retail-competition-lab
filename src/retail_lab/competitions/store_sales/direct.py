@@ -28,6 +28,13 @@ DYNAMIC_LAGS = ["origin_value", "weekly_0", "weekly_1", "weekly_2", "weekly_3"]
 BASE_DIRECT = [*DYNAMIC_LAGS, HORIZON_FEATURE, *BASE_FEATURES, "family"]
 FEATURES = list(BASE_DIRECT)
 INTERMITTENT_DIRECT = [*BASE_DIRECT, *INTERMITTENT_FEATURES]
+FAMILY_TREND_FEATURES = [
+    "family_mean_7",
+    "family_mean_28",
+    "family_level_ratio_7_56",
+    "family_same_dow_4",
+]
+FAMILY_TREND_DIRECT = [*INTERMITTENT_DIRECT, *FAMILY_TREND_FEATURES]
 CATEGORICALS = ["store_nbr", "type", "cluster", "family"]
 OUTPUT = [ROW_ID, DATE, SERIES_ID, "pred"]
 
@@ -151,6 +158,61 @@ def _attach_intermittent(
     return out
 
 
+def _family_states(frame: pd.DataFrame) -> pd.DataFrame:
+    """各売り場の全店舗平均から、共通する直近の勢いを日ごとに作る。"""
+    daily = (
+        frame.groupby(["family", DATE])[TARGET]
+        .mean()
+        .rename(TARGET)
+        .reset_index()
+        .sort_values(["family", DATE])
+    )
+    pieces: list[pd.DataFrame] = []
+    for _family, group in daily.groupby("family", sort=False):
+        part = group.copy()
+        values = part[TARGET].astype(float)
+        part["family_mean_7"] = values.rolling(7, min_periods=7).mean()
+        part["family_mean_28"] = values.rolling(28, min_periods=28).mean()
+        far = values.rolling(56, min_periods=28).mean()
+        part["family_level_ratio_7_56"] = (part["family_mean_7"] + 1.0) / (far + 1.0)
+        part["family_same_dow_4"] = pd.concat(
+            [values.shift(lag) for lag in (7, 14, 21, 28)], axis=1
+        ).mean(axis=1)
+        pieces.append(part[["family", DATE, *FAMILY_TREND_FEATURES]])
+    return pd.concat(pieces, ignore_index=True)
+
+
+def _attach_family_trend(
+    frame: pd.DataFrame,
+    states: pd.DataFrame,
+    horizons: pd.Series | np.ndarray,
+    *,
+    fixed_origin: pd.Timestamp | None = None,
+) -> pd.DataFrame:
+    """各予測行に、予測起点までに確定した売り場全体の勢いを付ける。"""
+    out = frame.copy()
+    horizon_values = (
+        horizons.to_numpy(dtype=int)
+        if isinstance(horizons, pd.Series)
+        else np.asarray(horizons, dtype=int)
+    )
+    origins = (
+        pd.to_datetime(out[DATE]) - pd.to_timedelta(horizon_values, unit="D")
+        if fixed_origin is None
+        else pd.Series(fixed_origin, index=out.index)
+    )
+    lookup = out[["family"]].copy()
+    lookup["_origin"] = origins.to_numpy()
+    merged = lookup.merge(
+        states.rename(columns={DATE: "_origin"}),
+        on=["family", "_origin"],
+        how="left",
+    )
+    for name in FAMILY_TREND_FEATURES:
+        out[name] = merged[name].to_numpy()
+    return out
+
+
 def fit_predict(
     train: pd.DataFrame,
     future: pd.DataFrame,
@@ -159,6 +221,7 @@ def fit_predict(
     context_days: int = 730,
     intermittent: bool = False,
     hurdle: bool = False,
+    family_trend: bool = False,
 ) -> tuple[pd.DataFrame, list[dict[str, float | str]]]:
     """未来の正解を読まず、全予測日を直接予測する。
 
@@ -167,7 +230,11 @@ def fit_predict(
     """
     if hurdle and not intermittent:
         raise ValueError("hurdle は intermittent=True のときだけ使えます")
-    columns = INTERMITTENT_DIRECT if intermittent else FEATURES
+    if family_trend and not intermittent:
+        raise ValueError("family_trend は intermittent=True のときだけ使えます")
+    columns = (
+        FAMILY_TREND_DIRECT if family_trend else INTERMITTENT_DIRECT if intermittent else FEATURES
+    )
     future_clean = future.drop(columns=[TARGET], errors="ignore").copy()
     horizon = int(future_clean[DATE].nunique())
     if horizon < 1:
@@ -178,8 +245,11 @@ def fit_predict(
     train_horizons = _horizons(recent[DATE], horizon)
     featured = _add_dynamic_lags(recent, train_horizons)
     states = _origin_states(recent) if intermittent else None
+    family_states = _family_states(recent) if family_trend else None
     if intermittent and states is not None:
         featured = _attach_intermittent(featured, states, train_horizons)
+    if family_trend and family_states is not None:
+        featured = _attach_family_trend(featured, family_states, train_horizons)
     featured = featured[featured[DATE] > train[DATE].max() - pd.Timedelta(days=context_days)]
     featured = featured.dropna(subset=DYNAMIC_LAGS)
 
@@ -200,6 +270,13 @@ def fit_predict(
     if intermittent and states is not None:
         future_clean = _attach_intermittent(
             future_clean, states, future_clean[HORIZON_FEATURE].to_numpy(), fixed_origin=origin
+        )
+    if family_trend and family_states is not None:
+        future_clean = _attach_family_trend(
+            future_clean,
+            family_states,
+            future_clean[HORIZON_FEATURE].to_numpy(),
+            fixed_origin=origin,
         )
 
     x = featured[columns].copy()

@@ -897,6 +897,80 @@ def test_direct_origin_state_marks_a_sale_on_the_same_day_as_gap_one():
     assert state["recursive_days_since_sale"].tolist() == [56.0, 56.0, 1.0, 2.0]
 
 
+def test_direct_family_trend_uses_only_the_forecast_origin():
+    from retail_lab.competitions.store_sales import direct
+
+    dates = pd.date_range("2017-01-01", periods=70)
+    frame = pd.DataFrame(
+        {
+            "family": ["A"] * 140,
+            "series_id": ["1::A"] * 70 + ["2::A"] * 70,
+            "date": list(dates) * 2,
+            "target": [float(i) for i in range(70)] * 2,
+        }
+    )
+    states = direct._family_states(frame)
+    future = pd.DataFrame(
+        {
+            "family": ["A", "A"],
+            "date": [dates[-1] + pd.Timedelta(days=1), dates[-1] + pd.Timedelta(days=4)],
+        }
+    )
+    attached = direct._attach_family_trend(
+        future,
+        states,
+        np.array([1, 4]),
+        fixed_origin=dates[-1],
+    )
+
+    assert attached.loc[0, "family_mean_7"] == pytest.approx(attached.loc[1, "family_mean_7"])
+    assert attached[direct.FAMILY_TREND_FEATURES].notna().all().all()
+
+
+def test_direct_family_trend_forecast_never_reads_future_targets():
+    from retail_lab.competitions.store_sales.direct import fit_predict
+
+    panel = _panel(days=120, horizon=4)
+    for column, value in {
+        "family": "A",
+        "store_nbr": 1,
+        "type": "A",
+        "cluster": 1,
+        "onpromotion": 0.0,
+        "promo_log": 0.0,
+        "oil": 50.0,
+        "oil_lag7": 50.0,
+        "dow": 1,
+        "day": 1,
+        "month": 1,
+        "week": 1,
+        "is_weekend": 0,
+        "is_payday": 0,
+        "is_national_holiday": 0,
+        "is_local_holiday": 0,
+        "is_earthquake": 0,
+        "transactions_lag16": 100.0,
+        **EXOG_DEFAULTS,
+    }.items():
+        panel[column] = value
+    split = split_panel(panel, 4)
+    changed = split.val.copy()
+    changed["target"] = 999999.0
+    kwargs = {
+        "n_estimators": 8,
+        "context_days": 120,
+        "intermittent": True,
+        "family_trend": True,
+    }
+    first, ranked = fit_predict(split.train, split.val, **kwargs)
+    second, _ = fit_predict(split.train, changed, **kwargs)
+
+    assert first.sort_values("row_id")["pred"].tolist() == pytest.approx(
+        second.sort_values("row_id")["pred"].tolist()
+    )
+    assert {str(item["feature"]) for item in ranked} >= {"family_level_ratio_7_56"}
+
+
 def test_recursive_drop_earthquake_does_not_read_future_targets():
     from retail_lab.competitions.store_sales.recursive import fit_predict
 

@@ -186,6 +186,31 @@ def prepare(root: Path, source: str) -> Prepared:
                 predict=partial(direct.fit_predict, intermittent=True, hurdle=True),
                 org="custom",
             ),
+            CandidateModel(
+                id="direct_family_trend",
+                title="予測距離別 LightGBM（売り場全体の勢い）",
+                note=(
+                    "全54店で同じ売り場が最近増えたか減ったかを足す。"
+                    "GROCERY II のような全体の水準変化を各店へ伝える。"
+                ),
+                predict=partial(direct.fit_predict, intermittent=True, family_trend=True),
+                org="custom",
+            ),
+            CandidateModel(
+                id="direct_family_trend_hurdle",
+                title="予測距離別 LightGBM（売り場の勢い × 2段構え）",
+                note=(
+                    "売り場全体の勢いを見ながら、売れる確率と量を別に学ぶ。"
+                    "店舗単独の偶然と全店共通の変化を分ける。"
+                ),
+                predict=partial(
+                    direct.fit_predict,
+                    intermittent=True,
+                    hurdle=True,
+                    family_trend=True,
+                ),
+                org="custom",
+            ),
         ],
         extra={"data_dir": str(bundle.data_dir)},
     )
