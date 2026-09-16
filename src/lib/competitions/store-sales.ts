@@ -50,7 +50,7 @@ const storeSales: CompetitionContent = {
       { label: "先週と同じ", score: 0.617, kind: "other" },
       { label: "機械学習1本", score: 0.4365, kind: "other" },
       { label: "最初の提出", score: 0.39515, kind: "other" },
-      { label: "いまの候補", score: 0.37684, kind: "ours" },
+      { label: "いまの候補", score: 0.3768, kind: "ours" },
     ],
     scoreLead: "低いほど良い。0.62≈1.9倍ずれ、0.38≈1.46倍。",
     struggles: [
@@ -214,7 +214,7 @@ const storeSales: CompetitionContent = {
   ],
   nextSteps: [
     "下着売り場（LINGERIE）と小さめ食料品（GROCERY II）を正直採点で改善する。",
-    "公開LBでいまの提出候補 0.37684 が再現するか確認する。",
+    "公開LBでいまの提出候補 0.37680 が再現するか確認する。",
   ],
   demoNote: "デモは公式と同じ列名の縮小データ（4店舗 × 6ファミリー）です。",
 };

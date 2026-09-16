@@ -84,6 +84,7 @@ const SHORT: Record<string, string> = {
   "direct-family-trend-v1": "全店の売り場の勢い",
   "direct-peer-context-v1": "地域の同業店勢い",
   "family-calibrate-v1": "売り場ごとの倍率補正",
+  "robust-pool-variants-v1": "中央値・幾何平均",
   "foundation-blend-v1": "最初の提出",
 };
 
