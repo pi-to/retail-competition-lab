@@ -86,6 +86,7 @@ const SHORT: Record<string, string> = {
   "family-calibrate-v1": "売り場ごとの倍率補正",
   "robust-pool-variants-v1": "中央値・幾何平均",
   "recursive-family-trend-v1": "積み上げにも売り場勢い",
+  "statistical-diversity-v1": "古い手法も混ぜる",
   "foundation-blend-v1": "最初の提出",
 };
 
