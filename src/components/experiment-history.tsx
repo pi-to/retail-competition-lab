@@ -87,6 +87,7 @@ const SHORT: Record<string, string> = {
   "robust-pool-variants-v1": "中央値・幾何平均",
   "recursive-family-trend-v1": "積み上げにも売り場勢い",
   "statistical-diversity-v1": "古い手法も混ぜる",
+  "promo-context-v1": "全店の特売の強さ",
   "foundation-blend-v1": "最初の提出",
 };
 

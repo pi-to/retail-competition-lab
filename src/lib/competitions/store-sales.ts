@@ -50,20 +50,20 @@ const storeSales: CompetitionContent = {
       { label: "先週と同じ", score: 0.617, kind: "other" },
       { label: "機械学習1本", score: 0.4365, kind: "other" },
       { label: "最初の提出", score: 0.39515, kind: "other" },
-      { label: "いまの候補", score: 0.37657, kind: "ours" },
+      { label: "いまの候補", score: 0.37623, kind: "ours" },
     ],
     scoreLead: "低いほど良い。0.62≈1.9倍ずれ、0.38≈1.46倍。",
     struggles: [
       {
         family: "LINGERIE",
         familiar: "下着売り場",
-        score: 0.613,
+        score: 0.618,
         plain: "売れない日が多く、ゼロと勘違いしやすい",
       },
       {
         family: "GROCERY II",
         familiar: "小さめの食料品",
-        score: 0.568,
+        score: 0.569,
         plain: "急に売れ方が変わり、多めに見てしまいがち",
       },
       {
@@ -75,13 +75,13 @@ const storeSales: CompetitionContent = {
       {
         family: "HARDWARE",
         familiar: "金物・工具",
-        score: 0.521,
+        score: 0.522,
         plain: "普段は静かで、たまにまとめて売れる",
       },
       {
         family: "AUTOMOTIVE",
         familiar: "車用品",
-        score: 0.501,
+        score: 0.5,
         plain: "買う人が限られ、日によって0が続く",
       },
     ],
