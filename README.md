@@ -107,11 +107,14 @@ tests/                     指標・分割・混合のテスト
 
 ## Kaggle への提出
 
-提出には、データ取得より強い権限が必要です。次の2つが揃っていないと Kaggle が 403 を返します。
+提出にはコンペへの参加が必要です。未参加のまま提出すると Kaggle は
+`Permission 'competitions.participate' was denied`（HTTP 403）を返します。
 
-1. APIトークンに `competitions.participate`（および提出）の権限がある。
-   Kaggle の [Settings](https://www.kaggle.com/settings) で権限を含めて作り直します。
-2. コンペページで Join Competition を押し、規約に同意している（チームが作られる）。
+コンペページで Join Competition を押し、規約に同意してください（これでチームが作られます）。
+参加済みで直らない場合は、電話番号認証の未完了、招待制コンペ、トークンの失効を順に確認します。
+
+個人アクセストークン（`KGAT_`）の作成画面に権限の選択肢はありません。権限（スコープ）の指定は
+OAuth アプリ向けの仕組みなので、提出のためにトークンを作り直す必要は通常ありません。
 
 状態は先に確認できます。
 

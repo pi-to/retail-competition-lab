@@ -183,10 +183,13 @@ def explain_api_error(status: int, detail: str, slug: str) -> tuple[str, str]:
     denied = re.search(r"Permission '([^']+)' was denied", message)
     if denied:
         scope = denied.group(1)
+        # このエラーはトークンの種類ではなく、アカウントがコンペに参加していないと出る。
+        # 個人トークンの作成画面に権限の選択肢はない。
         return (
-            f"APIトークンに権限 {scope} がありません。",
-            "Kaggle の Settings で新しいトークンを作り、"
-            "competitions.participate と競技への提出を許可する権限を含めてください。",
+            f"Kaggle が権限 {scope} を認めませんでした。コンペへの参加が済んでいないのが典型です。",
+            f"{rules_url(slug)} で Join Competition を押して規約に同意してください。"
+            "参加済みなら、電話番号認証の未完了、招待制コンペ、"
+            "トークンの失効を順に確認してください。",
         )
     if "do not have a Team" in message or "not have a team" in message.lower():
         return (

@@ -311,19 +311,19 @@ export function SubmitCard({ result }: { result: Result }) {
                   <span className="flex flex-wrap gap-3 text-xs">
                     <a
                       className="underline"
+                      href="https://www.kaggle.com/competitions/store-sales-time-series-forecasting/rules"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      コンペに参加する（Join Competition）
+                    </a>
+                    <a
+                      className="underline"
                       href="https://www.kaggle.com/settings"
                       target="_blank"
                       rel="noreferrer"
                     >
                       トークンを作り直す
-                    </a>
-                    <a
-                      className="underline"
-                      href="https://www.kaggle.com/competitions/store-sales-time-series-forecasting/rules"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      コンペに参加する
                     </a>
                     <a
                       className="underline"

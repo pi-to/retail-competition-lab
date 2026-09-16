@@ -206,12 +206,13 @@ def test_submission_validation_rejects_invalid_files(
         validate_submission(submission, sample)
 
 
-def test_explain_api_error_names_the_missing_token_scope():
-    """新しい Kaggle トークンは権限が分かれている。どの権限が無いかまで伝える。"""
+def test_explain_api_error_points_a_permission_denial_at_joining_the_competition():
+    """権限拒否は、トークンではなくコンペ未参加が原因のことが多い。"""
     detail = '{"code":403,"message":"Permission \'competitions.participate\' was denied"}'
     message, hint = explain_api_error(403, detail, "store-sales-time-series-forecasting")
     assert "competitions.participate" in message
-    assert "Settings" in hint
+    assert "store-sales-time-series-forecasting/rules" in hint
+    assert "Join Competition" in hint
 
 
 def test_explain_api_error_detects_that_the_competition_was_not_joined():
