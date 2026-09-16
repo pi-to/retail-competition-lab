@@ -50,7 +50,7 @@ const storeSales: CompetitionContent = {
       { label: "先週と同じ", score: 0.617, kind: "other" },
       { label: "機械学習1本", score: 0.4365, kind: "other" },
       { label: "最初の提出", score: 0.39515, kind: "other" },
-      { label: "いまの候補", score: 0.3768, kind: "ours" },
+      { label: "いまの候補", score: 0.37668, kind: "ours" },
     ],
     scoreLead: "低いほど良い。0.62≈1.9倍ずれ、0.38≈1.46倍。",
     struggles: [
