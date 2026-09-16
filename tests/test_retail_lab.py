@@ -9,6 +9,7 @@ from retail_lab.competition import CompetitionSpec
 from retail_lab.kaggle import (
     SubmissionValidationError,
     explain_api_error,
+    readiness_blockers,
     validate_submission,
 )
 from retail_lab.metrics import business_metrics, rmsle
@@ -220,6 +221,26 @@ def test_explain_api_error_detects_that_the_competition_was_not_joined():
     message, hint = explain_api_error(400, detail, "store-sales-time-series-forecasting")
     assert "参加" in message
     assert "store-sales-time-series-forecasting/rules" in hint
+
+
+def test_readiness_names_the_account_that_has_not_joined():
+    """参加済みかどうかはアカウント単位。誰が参加すべきかまで言う。"""
+    info = {"ref": "https://www.kaggle.com/competitions/x", "userHasEntered": False}
+    blockers = readiness_blockers("pitodonkey", info, "store-sales-time-series-forecasting")
+    assert len(blockers) == 1
+    assert "pitodonkey" in blockers[0]
+    assert "store-sales-time-series-forecasting/rules" in blockers[0]
+
+
+def test_readiness_is_silent_when_the_account_can_submit():
+    info = {"userHasEntered": True, "submissionsDisabled": False, "isKernelsSubmissionsOnly": False}
+    assert readiness_blockers("pitodonkey", info, "store-sales-time-series-forecasting") == []
+
+
+def test_readiness_reports_notebook_only_competitions():
+    info = {"userHasEntered": True, "isKernelsSubmissionsOnly": True}
+    blockers = readiness_blockers("pitodonkey", info, "arc-prize")
+    assert any("ノートブック" in blocker for blocker in blockers)
 
 
 def test_explain_api_error_keeps_the_original_message_when_unknown():

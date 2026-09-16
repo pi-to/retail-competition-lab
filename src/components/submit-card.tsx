@@ -37,7 +37,13 @@ type Receipt = {
   description: string;
 };
 
-type Preflight = { ok: boolean; message: string; hint?: string };
+type Preflight = {
+  ok: boolean;
+  message: string;
+  hint?: string;
+  account?: string | null;
+  entered?: boolean | null;
+};
 
 export function SubmitCard({ result }: { result: Result }) {
   const [confirming, setConfirming] = useState(false);
@@ -308,6 +314,13 @@ export function SubmitCard({ result }: { result: Result }) {
                 <AlertDescription className="flex flex-col gap-2">
                   <span>{preflight.message}</span>
                   {preflight.hint ? <span>{preflight.hint}</span> : null}
+                  {preflight.account ? (
+                    <span className="text-xs">
+                      使用中のトークンのアカウント：
+                      <span className="font-mono">{preflight.account}</span>
+                      。ブラウザで別のアカウントに参加していても、こちらが参加していないと提出できません。
+                    </span>
+                  ) : null}
                   <span className="flex flex-wrap gap-3 text-xs">
                     <a
                       className="underline"

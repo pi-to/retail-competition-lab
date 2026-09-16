@@ -230,6 +230,59 @@ def _multipart(fields: dict[str, str]) -> tuple[bytes, str]:
     return b"".join(chunks), boundary
 
 
+def account_name(root: Path) -> str | None:
+    """トークンがどのアカウントのものかを返す。参加状態の食い違いはここで分かる。"""
+    headers = auth_header(root)
+    if headers is None:
+        return None
+    try:
+        hello = _json_request("https://www.kaggle.com/api/v1/hello", headers)
+    except KaggleError:
+        return None
+    name = hello.get("userName")
+    return str(name) if name else None
+
+
+def competition_info(root: Path, slug: str) -> dict[str, Any] | None:
+    """コンペの参加状態と提出方式を読む。"""
+    headers = auth_header(root)
+    if headers is None:
+        return None
+    url = f"https://www.kaggle.com/api/v1/competitions/list?search={slug}"
+    request = urllib.request.Request(
+        url, headers={**headers, "Accept": "application/json", "User-Agent": "retail-lab"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            payload = json.loads(response.read())
+    except (urllib.error.URLError, json.JSONDecodeError):
+        return None
+    items = payload if isinstance(payload, list) else [payload]
+    for item in items:
+        if isinstance(item, dict) and str(item.get("ref", "")).endswith(slug):
+            return item
+    return None
+
+
+def readiness_blockers(account: str | None, info: dict[str, Any] | None, slug: str) -> list[str]:
+    """提出を妨げている事実だけを並べる。"""
+    who = account or "不明なアカウント"
+    if info is None:
+        return [f"コンペ {slug} の参加状態を確認できませんでした。"]
+
+    blockers: list[str] = []
+    if not info.get("userHasEntered"):
+        blockers.append(
+            f"トークンのアカウント（{who}）はこのコンペに参加していません。"
+            f"同じアカウントで {rules_url(slug)} を開き、規約に同意してください。"
+        )
+    if info.get("submissionsDisabled"):
+        blockers.append("このコンペは現在提出を受け付けていません。")
+    if info.get("isKernelsSubmissionsOnly"):
+        blockers.append("このコンペはノートブック経由の提出のみを認めています。")
+    return blockers
+
+
 def check_submit_access(root: Path, slug: str, submission: Path) -> dict[str, Any]:
     """提出の1段目だけを試し、権限と参加状態を先に確かめる。
 
@@ -242,6 +295,19 @@ def check_submit_access(root: Path, slug: str, submission: Path) -> dict[str, An
             "message": "Kaggle の認証情報がありません。",
             "hint": "KAGGLE_API_TOKEN を .env.local に設定してください。",
         }
+
+    account = account_name(root)
+    info = competition_info(root, slug)
+    blockers = readiness_blockers(account, info, slug)
+    if blockers:
+        return {
+            "ok": False,
+            "message": blockers[0],
+            "hint": " ".join(blockers[1:]),
+            "account": account,
+            "entered": bool(info.get("userHasEntered")) if info else None,
+        }
+
     try:
         _json_request(
             _submission_url(),
@@ -256,8 +322,14 @@ def check_submit_access(root: Path, slug: str, submission: Path) -> dict[str, An
             slug=slug,
         )
     except KaggleError as exc:
-        return {"ok": False, "message": str(exc), "hint": exc.hint}
-    return {"ok": True, "message": "提出できます。", "hint": ""}
+        return {"ok": False, "message": str(exc), "hint": exc.hint, "account": account}
+    return {
+        "ok": True,
+        "message": f"提出できます（アカウント {account}）。",
+        "hint": "",
+        "account": account,
+        "entered": True,
+    }
 
 
 def submit(
