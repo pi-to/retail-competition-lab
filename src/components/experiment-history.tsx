@@ -2,11 +2,10 @@
 
 import { useState } from "react";
 import {
-  Bar,
-  BarChart,
   CartesianGrid,
-  Cell,
-  Legend,
+  Line,
+  LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -45,8 +44,6 @@ type Run = {
 
 export type RunHistory = { runs: Run[]; tags: Record<string, string> };
 
-const COLORS = { 採用: "#2563eb", 改善: "#16a34a", 不採用: "#a1a1aa" };
-
 const ACTION_VARIANT: Record<SubmitAction, "default" | "secondary" | "outline" | "destructive"> = {
   submit_now: "default",
   already_submitted: "secondary",
@@ -63,17 +60,22 @@ export function ExperimentHistory({
 }) {
   const rec = submitRecommendation();
   const ranked = experimentsByScore();
+  const improved = STORE_SALES_EXPERIMENTS.filter((item) => item.outcome !== "不採用");
+  const failed = STORE_SALES_EXPERIMENTS.filter((item) => item.outcome === "不採用");
   const [selected, setSelected] = useState<string>(rec.experiment.id);
+  const [showFailed, setShowFailed] = useState(false);
   const [history, setHistory] = useState(initial);
   const [pending, setPending] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const insight = ranked.find((item) => item.id === selected) ?? rec.experiment;
-  const chart = STORE_SALES_EXPERIMENTS.map((item) => ({
-    name: short(item.title),
-    local: item.localRmsle,
-    leaderboard: item.leaderboard,
-    outcome: item.outcome,
-  }));
+  const visible = showFailed ? ranked : ranked.filter((item) => item.outcome !== "不採用");
+  const trail = [...improved]
+    .sort((a, b) => b.localRmsle - a.localRmsle)
+    .map((item, index) => ({
+      step: index + 1,
+      name: item.title,
+      score: item.localRmsle,
+    }));
 
   async function refresh() {
     const response = await fetch(`/api/runs?competition=${competition}`, { cache: "no-store" });
@@ -100,117 +102,131 @@ export function ExperimentHistory({
   return (
     <Tabs defaultValue="insights">
       <TabsList>
-        <TabsTrigger value="insights">試したこと</TabsTrigger>
-        <TabsTrigger value="runs">Run履歴・戻す</TabsTrigger>
+        <TabsTrigger value="insights">やったこと</TabsTrigger>
+        <TabsTrigger value="runs">戻す</TabsTrigger>
         <TabsTrigger value="article">記事草稿</TabsTrigger>
       </TabsList>
 
       <TabsContent value="insights" className="mt-3 flex flex-col gap-3">
         <Alert>
           <AlertTitle>{rec.headline}</AlertTitle>
-          <AlertDescription className="flex flex-col gap-1">
-            <span>{rec.whyThis}</span>
-            <span>{rec.doNotSubmit}</span>
-            {rec.experiment.runId ? (
-              <span className="font-mono text-xs">Run ID: {rec.experiment.runId}</span>
-            ) : null}
-          </AlertDescription>
+          <AlertDescription>{rec.experiment.plain}</AlertDescription>
         </Alert>
 
         <Card>
           <CardHeader>
-            <CardTitle>実験履歴</CardTitle>
+            <CardTitle className="text-base">ここまでの縮み方</CardTitle>
             <CardDescription>
-              ローカルRMSLEが低い順。提出列が空欄に見える行は出さない。行をクリックすると下に理由が出る。
+              左から右へ、試すたびに点数が下がってきた。下ほど良い。
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={trail} margin={{ left: 4, right: 12, top: 8, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="step" tick={{ fontSize: 11 }} />
+                <YAxis
+                  domain={[0.36, 0.42]}
+                  tick={{ fontSize: 11 }}
+                  tickFormatter={(value) => Number(value).toFixed(2)}
+                />
+                <Tooltip
+                  formatter={(value) => Number(value).toFixed(5)}
+                  labelFormatter={(step) =>
+                    trail.find((item) => item.step === step)?.name ?? `${step}`
+                  }
+                />
+                <ReferenceLine
+                  y={0.39515}
+                  stroke="#f97316"
+                  strokeDasharray="4 4"
+                  label={{ value: "本番で確認済み 0.39515", fontSize: 10, position: "insideTopRight" }}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="score"
+                  stroke="#2563eb"
+                  strokeWidth={2}
+                  dot={{ r: 3 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">試したこと</CardTitle>
+            <CardDescription>
+              点数が良い順。行を押すと、なぜそうなったかが下に出ます。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>提出</TableHead>
-                    <TableHead className="text-right">ローカル</TableHead>
-                    <TableHead className="text-right">公開LB</TableHead>
-                    <TableHead>実験</TableHead>
-                    <TableHead>判定</TableHead>
-                    <TableHead>タグ</TableHead>
+                    <TableHead className="text-right">点数</TableHead>
+                    <TableHead>やったこと</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {ranked.map((item) => {
-                    const isSubmit = item.submitAction === "submit_now";
-                    return (
-                      <TableRow
-                        key={item.id}
-                        data-state={item.id === selected ? "selected" : undefined}
-                        className={isSubmit ? "bg-primary/5" : undefined}
-                        onClick={() => setSelected(item.id)}
-                      >
-                        <TableCell>
+                  {visible.map((item) => (
+                    <TableRow
+                      key={item.id}
+                      data-state={item.id === selected ? "selected" : undefined}
+                      className={item.submitAction === "submit_now" ? "bg-primary/5" : undefined}
+                      onClick={() => setSelected(item.id)}
+                    >
+                      <TableCell>
+                        {item.submitAction === "do_not_submit" ? (
+                          <span className="text-muted-foreground">—</span>
+                        ) : (
                           <Badge variant={ACTION_VARIANT[item.submitAction]}>
                             {SUBMIT_LABEL[item.submitAction]}
                           </Badge>
-                        </TableCell>
-                        <TableCell className="text-right font-mono font-medium">
-                          {item.localRmsle.toFixed(5)}
-                        </TableCell>
-                        <TableCell className="text-right font-mono text-muted-foreground">
-                          {item.leaderboard != null ? item.leaderboard.toFixed(5) : "—"}
-                        </TableCell>
-                        <TableCell className="max-w-56 whitespace-normal font-medium">
-                          {item.title}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant={item.outcome === "不採用" ? "outline" : "secondary"}>
-                            {item.outcome}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">
-                          {item.tag}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right font-mono font-medium">
+                        {item.localRmsle.toFixed(3)}
+                        {item.leaderboard != null ? (
+                          <span className="block text-xs font-normal text-muted-foreground">
+                            本番 {item.leaderboard.toFixed(3)}
+                          </span>
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="max-w-xl whitespace-normal">
+                        <span className="font-medium">{item.title}</span>
+                        <span className="block text-sm text-muted-foreground">{item.plain}</span>
+                      </TableCell>
+                    </TableRow>
+                  ))}
                 </TableBody>
               </Table>
             </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="self-start"
+              onClick={() => setShowFailed((value) => !value)}
+            >
+              {showFailed
+                ? "うまくいかなかった試行を隠す"
+                : `うまくいかなかった試行も見る（${failed.length}件）`}
+            </Button>
           </CardContent>
         </Card>
 
         <InsightDetail insight={insight} />
-
-        <Card>
-          <CardHeader>
-            <CardTitle>試行ごとのローカルRMSLE</CardTitle>
-            <CardDescription>低いほど良い。灰色の失敗も消さず、次の判断材料にする。</CardDescription>
-          </CardHeader>
-          <CardContent className="h-80">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={chart} layout="vertical" margin={{ left: 78, right: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                <XAxis type="number" domain={[0.35, 0.65]} tick={{ fontSize: 11 }} />
-                <YAxis type="category" dataKey="name" width={125} tick={{ fontSize: 10 }} />
-                <Tooltip formatter={(value) => Number(value).toFixed(5)} />
-                <Legend />
-                <Bar name="ローカル検証" dataKey="local" radius={[0, 4, 4, 0]}>
-                  {chart.map((item) => (
-                    <Cell key={item.name} fill={COLORS[item.outcome]} />
-                  ))}
-                </Bar>
-                <Bar name="公開LB" dataKey="leaderboard" fill="#f97316" radius={[0, 4, 4, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
       </TabsContent>
 
       <TabsContent value="runs" className="mt-3 flex flex-col gap-3">
         <Alert>
-          <AlertTitle>タグで安全に戻せます</AlertTitle>
+          <AlertTitle>前の版にいつでも戻せます</AlertTitle>
           <AlertDescription>
-            Championだけが現在の result.json / submission.csv です。失敗Runも不変のまま残ります。
-            「戻す」はコードを変えず、選んだRunの成果物を復元します。Kaggleへ出すのは Champion のCSV。
+            提出用のCSVは、いま選ばれている1本だけ。過去の実験はそのまま残してあるので、
+            悪くなったら押すだけで戻せます。
           </AlertDescription>
         </Alert>
         {message ? <p className="text-sm text-muted-foreground">{message}</p> : null}
@@ -218,7 +234,7 @@ export function ExperimentHistory({
           <CardContent>
             {history.runs.length === 0 ? (
               <p className="py-4 text-sm text-muted-foreground">
-                この環境にアーカイブされたRunはありません。提出判断は上の実験履歴表を見てください。
+                この環境に保存された実験はありません。判断は上の表を見てください。
               </p>
             ) : (
               <div className="overflow-x-auto">
@@ -226,10 +242,8 @@ export function ExperimentHistory({
                   <TableHeader>
                     <TableRow>
                       <TableHead>提出CSV</TableHead>
-                      <TableHead className="text-right">ローカル</TableHead>
-                      <TableHead className="text-right">公開LB</TableHead>
-                      <TableHead>ラベル</TableHead>
-                      <TableHead>Run ID</TableHead>
+                      <TableHead className="text-right">点数</TableHead>
+                      <TableHead>実験</TableHead>
                       <TableHead></TableHead>
                     </TableRow>
                   </TableHeader>
@@ -252,31 +266,24 @@ export function ExperimentHistory({
                             )}
                           </TableCell>
                           <TableCell className="text-right font-mono">
-                            {run.local_rmsle.toFixed(5)}
+                            {run.local_rmsle.toFixed(3)}
+                            {run.leaderboard !== null ? (
+                              <span className="block text-xs text-muted-foreground">
+                                本番 {run.leaderboard.toFixed(3)}
+                              </span>
+                            ) : null}
                           </TableCell>
-                          <TableCell className="text-right font-mono text-muted-foreground">
-                            {run.leaderboard !== null ? run.leaderboard.toFixed(5) : "—"}
-                          </TableCell>
-                          <TableCell className="max-w-48 whitespace-normal">
-                            <div className="flex flex-wrap items-center gap-1">
-                              <span>{run.label}</span>
-                              {tags
-                                .filter((tag) => tag !== "champion")
-                                .map((tag) => (
-                                  <Badge key={tag} variant="outline">
-                                    {tag}
-                                  </Badge>
-                                ))}
-                            </div>
-                          </TableCell>
-                          <TableCell className="font-mono text-xs text-muted-foreground">
-                            {run.run_id}
+                          <TableCell className="max-w-64 whitespace-normal">
+                            <span>{run.label}</span>
+                            <span className="block font-mono text-xs text-muted-foreground">
+                              {run.created_at.slice(0, 16).replace("T", " ")}
+                            </span>
                           </TableCell>
                           <TableCell>
                             {pending === run.run_id ? (
                               <div className="flex gap-2">
                                 <Button size="sm" onClick={() => void promote(run.run_id)}>
-                                  このRunへ戻す
+                                  これに戻す
                                 </Button>
                                 <Button size="sm" variant="outline" onClick={() => setPending(null)}>
                                   やめる
@@ -289,7 +296,7 @@ export function ExperimentHistory({
                                 disabled={isChampion}
                                 onClick={() => setPending(run.run_id)}
                               >
-                                戻す内容を確認
+                                戻す
                               </Button>
                             )}
                           </TableCell>
@@ -309,7 +316,7 @@ export function ExperimentHistory({
           <CardHeader>
             <CardTitle>DevelopersIO記事草稿</CardTitle>
             <CardDescription>
-              成功だけでなく、TimesFM・単純混合・固定ゼロ処理が悪化した理由仮説まで書いています。
+              うまくいった話だけでなく、効かなかった試行とその理由仮説も入れています。
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3 text-sm text-muted-foreground">
@@ -336,20 +343,15 @@ function InsightDetail({ insight }: { insight: ExperimentInsight }) {
           <Badge variant={ACTION_VARIANT[insight.submitAction]}>
             {SUBMIT_LABEL[insight.submitAction]}
           </Badge>
-          <Badge variant={insight.outcome === "採用" ? "default" : "outline"}>
-            {insight.outcome}
-          </Badge>
-          <Badge variant="secondary">{insight.tag}</Badge>
         </CardTitle>
         <CardDescription>
-          local {insight.localRmsle.toFixed(5)}
-          {insight.leaderboard ? ` / LB ${insight.leaderboard.toFixed(5)}` : " / LB 未提出"}
-          {insight.runId ? ` / ${insight.runId}` : ""}
+          模擬試験 {insight.localRmsle.toFixed(5)}
+          {insight.leaderboard ? ` / 本番 ${insight.leaderboard.toFixed(5)}` : " / 本番は未提出"}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2 text-sm text-muted-foreground">
         <p>
-          <span className="font-medium text-foreground">試した：</span>
+          <span className="font-medium text-foreground">やったこと：</span>
           {insight.tried}
         </p>
         <p>
@@ -357,18 +359,14 @@ function InsightDetail({ insight }: { insight: ExperimentInsight }) {
           {insight.result}
         </p>
         <p>
-          <span className="font-medium text-foreground">原因仮説：</span>
+          <span className="font-medium text-foreground">なぜそうなったか：</span>
           {insight.why}
         </p>
         <p>
-          <span className="font-medium text-foreground">学び：</span>
+          <span className="font-medium text-foreground">次への学び：</span>
           {insight.learned}
         </p>
       </CardContent>
     </Card>
   );
-}
-
-function short(title: string) {
-  return title.length > 15 ? `${title.slice(0, 14)}…` : title;
 }
