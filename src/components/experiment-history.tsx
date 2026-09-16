@@ -273,6 +273,7 @@ export function ExperimentHistory({
             <CardTitle className="text-base">実験の一覧</CardTitle>
             <CardDescription>
               行を押すと下に一言だけ出ます。点数は「混ぜ方を決めていない店」で採点。
+              「売り場ごとに顔ぶれを変える」より前の行は、全売り場で同じ顔ぶれだった頃の点数です。
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
