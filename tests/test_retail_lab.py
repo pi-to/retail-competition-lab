@@ -8,6 +8,7 @@ from retail_lab import blending, registry
 from retail_lab.competition import CompetitionSpec
 from retail_lab.kaggle import (
     SubmissionValidationError,
+    auth_header,
     explain_api_error,
     readiness_blockers,
     validate_submission,
@@ -221,6 +222,30 @@ def test_explain_api_error_detects_that_the_competition_was_not_joined():
     message, hint = explain_api_error(400, detail, "store-sales-time-series-forecasting")
     assert "参加" in message
     assert "store-sales-time-series-forecasting/rules" in hint
+
+
+def test_auth_header_reads_the_env_file_so_a_token_swap_needs_no_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.delenv("KAGGLE_API_TOKEN", raising=False)
+    monkeypatch.delenv("KAGGLE_KEY", raising=False)
+    monkeypatch.delenv("KAGGLE_USERNAME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".env.local").write_text(
+        '# comment\nKAGGLE_API_TOKEN="KGAT_swapped"\n', encoding="utf-8"
+    )
+
+    assert auth_header(tmp_path) == {"Authorization": "Bearer KGAT_swapped"}
+
+
+def test_auth_header_prefers_the_process_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setenv("KAGGLE_API_TOKEN", "KGAT_from_env")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".env.local").write_text("KAGGLE_API_TOKEN=KGAT_from_file\n", encoding="utf-8")
+
+    assert auth_header(tmp_path) == {"Authorization": "Bearer KGAT_from_env"}
 
 
 def test_readiness_names_the_account_that_has_not_joined():

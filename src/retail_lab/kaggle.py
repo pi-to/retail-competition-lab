@@ -49,15 +49,31 @@ def _submit_url(slug: str) -> str:
     return f"https://www.kaggle.com/api/v1/competitions/submissions/submit/{slug}"
 
 
+def _env_file_values(root: Path) -> dict[str, str]:
+    """`.env.local` を直接読む。書き換えた直後に、再起動なしで効かせるため。"""
+    path = root / ".env.local"
+    if not path.exists():
+        return {}
+    values: dict[str, str] = {}
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        values[key.strip()] = value.strip().strip('"').strip("'")
+    return values
+
+
 def auth_header(root: Path) -> dict[str, str] | None:
     """Kaggle の2方式に対応する。
 
     - API トークン（``KGAT_`` で始まる）: Bearer 認証。ユーザー名は不要。
     - 旧来の username + key: Basic 認証。
     """
-    token = os.environ.get("KAGGLE_API_TOKEN") or ""
-    user = os.environ.get("KAGGLE_USERNAME") or ""
-    key = os.environ.get("KAGGLE_KEY") or ""
+    from_file = _env_file_values(root)
+    token = os.environ.get("KAGGLE_API_TOKEN") or from_file.get("KAGGLE_API_TOKEN") or ""
+    user = os.environ.get("KAGGLE_USERNAME") or from_file.get("KAGGLE_USERNAME") or ""
+    key = os.environ.get("KAGGLE_KEY") or from_file.get("KAGGLE_KEY") or ""
 
     if not token and not key:
         for candidate in (root / "kaggle.json", Path.home() / ".kaggle" / "kaggle.json"):
