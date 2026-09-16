@@ -50,20 +50,20 @@ const storeSales: CompetitionContent = {
       { label: "先週と同じ", score: 0.617, kind: "other" },
       { label: "機械学習1本", score: 0.4365, kind: "other" },
       { label: "最初の提出", score: 0.39515, kind: "other" },
-      { label: "いまの候補", score: 0.38027, kind: "ours" },
+      { label: "いまの候補", score: 0.37967, kind: "ours" },
     ],
     scoreLead: "低いほど良い。0.62≈1.9倍ずれ、0.38≈1.46倍。",
     struggles: [
       {
         family: "LINGERIE",
         familiar: "下着売り場",
-        score: 0.623,
+        score: 0.625,
         plain: "売れない日が多く、ゼロと勘違いしやすい",
       },
       {
         family: "GROCERY II",
         familiar: "小さめの食料品",
-        score: 0.571,
+        score: 0.575,
         plain: "急に売れ方が変わり、多めに見てしまいがち",
       },
       {
@@ -75,14 +75,14 @@ const storeSales: CompetitionContent = {
       {
         family: "HARDWARE",
         familiar: "金物・工具",
-        score: 0.522,
+        score: 0.523,
         plain: "普段は静かで、たまにまとめて売れる",
       },
       {
-        family: "SCHOOL AND OFFICE SUPPLIES",
-        familiar: "学用品",
-        score: 0.513,
-        plain: "学期の始まりだけ動く",
+        family: "AUTOMOTIVE",
+        familiar: "車用品",
+        score: 0.507,
+        plain: "買う人が限られ、日によって0が続く",
       },
     ],
   },
@@ -214,7 +214,7 @@ const storeSales: CompetitionContent = {
   ],
   nextSteps: [
     "下着売り場（LINGERIE）と小さめ食料品（GROCERY II）を正直採点で改善する。",
-    "公開LBでいまの提出候補 0.38027 が再現するか確認する。",
+    "公開LBでいまの提出候補 0.37967 が再現するか確認する。",
   ],
   demoNote: "デモは公式と同じ列名の縮小データ（4店舗 × 6ファミリー）です。",
 };

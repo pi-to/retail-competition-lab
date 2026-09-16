@@ -75,6 +75,7 @@ const SHORT: Record<string, string> = {
   "robust-min-family-v1": "控えめに抑える",
   "honest-selection-v1": "採点を正直に",
   "honest-subset-blend-v1": "顔ぶれを絞る",
+  "intermittent-recursive-v1": "売れない間隔を教える",
   "foundation-blend-v1": "最初の提出",
 };
 
