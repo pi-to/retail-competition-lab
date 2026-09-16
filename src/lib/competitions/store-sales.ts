@@ -144,9 +144,9 @@ const storeSales: CompetitionContent = {
     },
   ],
   nextSteps: [
-    "GROCERY II（検証RMSLE約0.571）だけ別構造を試す。",
+    "GROCERY II のレベル変化（検証窓で売上増）を、過学習しない特徴で捉える。",
     "予測12〜16日目の劣化を、過学習しない範囲で日別に補う。",
-    "公開LBで sparse-recursive-v1（0.37441）が再現するか確認する。",
+    "公開LBで robust-min-family-v1（0.37400）が再現するか確認する。",
   ],
   demoNote: "デモは公式と同じ列名の縮小データ（4店舗 × 6ファミリー）です。",
 };
