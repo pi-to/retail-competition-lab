@@ -88,6 +88,7 @@ const SHORT: Record<string, string> = {
   "recursive-family-trend-v1": "積み上げにも売り場勢い",
   "statistical-diversity-v1": "古い手法も混ぜる",
   "promo-context-v1": "全店の特売の強さ",
+  "family-lineups-v1": "売り場ごとに顔ぶれを変える",
   "foundation-blend-v1": "最初の提出",
 };
 
