@@ -95,7 +95,7 @@ def _client_report(
             {
                 "title": "どれくらい当たったか",
                 "body": (
-                    f"採用した混合モデルの予測は、隠した{horizon}日間の合計に対して平均 "
+                    f"採用した予測は、隠した{horizon}日間の合計に対して平均 "
                     f"{_pct(blend['wape'])} ずれました。"
                     f"言い換えると、100個売れる日を約{low:.0f}〜{high:.0f}個の幅で見込めています。"
                 ),
@@ -105,7 +105,8 @@ def _client_report(
         gain = 1 - blend["wape"] / base["wape"]
         body = (
             f"「先週の同じ曜日と同じだけ売れる」と考える単純な方法は同じ期間で "
-            f"{_pct(base['wape'])} ずれました。混合モデルはその誤差を {_pct(gain)} 減らしています。"
+            f"{_pct(base['wape'])} ずれました。"
+            f"採用した予測はその誤差を {_pct(gain)} 減らしています。"
             if gain > 0
             else (
                 f"単純な方法は {_pct(base['wape'])} でした。"
@@ -287,26 +288,43 @@ def run_experiment(prepared: Prepared, out_dir: Path, skip_foundation: bool = Fa
         except Exception as exc:  # noqa: BLE001 - 同上
             skipped("timesfm", "TimesFM 2.5", timesfm.CHECKPOINT, timesfm.ORG, exc)
 
-    write_status(out_dir, "blend", "混ぜ方を2通り試して良い方を採る", 90)
-    candidates: dict[str, dict[str, float]] = {
+    write_status(out_dir, "blend", "混ぜ方とゼロ系列の窓を検証窓で選ぶ", 90)
+    best_single = min(scores, key=lambda k: scores[k])
+    weight_options: dict[str, dict[str, float]] = {
         "rule": blending.inverse_rmsle_weights(scores),
         "fitted": blending.fit_log_weights(val_preds, split.val),
+        # 単体は重み1のひとつ。混ぜて悪化するならこれが選ばれる
+        "single": {best_single: 1.0},
     }
-    blends: dict[str, tuple[pd.DataFrame, pd.DataFrame, float]] = {}
-    for name, weights in candidates.items():
-        val_blend = blending.zero_out_dead_series(split.train, blending.blend(val_preds, weights))
-        test_blend = blending.zero_out_dead_series(labeled, blending.blend(test_preds, weights))
-        blends[name] = (val_blend, test_blend, blending.score_against(val_blend, split.val))
+    # 0 は「後処理をしない」。窓を長く取り過ぎると、まだ売れている系列まで0にしてしまう
+    windows = (0, 3, 7, 14, 21)
 
-    # 単体で一番良いモデルにも負けるなら、混ぜない方を出す
-    best_single = min(scores, key=lambda k: scores[k]) if scores else None
-    if best_single is not None:
-        blends["single"] = (val_preds[best_single], test_preds[best_single], scores[best_single])
-        candidates["single"] = {best_single: 1.0}
+    chosen: tuple[str, int] | None = None
+    best_score = float("inf")
+    best_frames: tuple[pd.DataFrame, pd.DataFrame] | None = None
+    per_strategy: dict[str, float] = {}
 
-    chosen = min(blends, key=lambda k: blends[k][2])
-    val_blend, test_blend, blend_score = blends[chosen]
-    weights = candidates[chosen]
+    for name, weights in weight_options.items():
+        val_raw = blending.blend(val_preds, weights)
+        test_raw = blending.blend(test_preds, weights)
+        for window in windows:
+            val_candidate = (
+                blending.zero_out_dead_series(split.train, val_raw, window) if window else val_raw
+            )
+            score = blending.score_against(val_candidate, split.val)
+            per_strategy[name] = min(per_strategy.get(name, float("inf")), score)
+            if score < best_score:
+                best_score = score
+                chosen = (name, window)
+                test_candidate = (
+                    blending.zero_out_dead_series(labeled, test_raw, window) if window else test_raw
+                )
+                best_frames = (val_candidate, test_candidate)
+
+    assert chosen is not None and best_frames is not None
+    strategy, zero_window = chosen
+    val_blend, test_blend = best_frames
+    weights = weight_options[strategy]
     blend_business = blending.business_against(val_blend, split.val)
 
     for row in models_meta:
@@ -318,17 +336,23 @@ def run_experiment(prepared: Prepared, out_dir: Path, skip_foundation: bool = Fa
         "fitted": "検証窓で RMSLE を最小にする非負の重みを当てた。",
         "single": f"混ぜると悪化したので {best_single} 単体を採用した。",
     }
+    zero_note = (
+        f"直近{zero_window}日がすべて0の系列は0にした。"
+        if zero_window
+        else "ゼロ系列の後処理は、検証窓で悪化したので使わない。"
+    )
     models_meta.append(
         {
             "id": "blend",
             "title": "提出する予測",
-            "note": f"{notes[chosen]}直近21日がすべて0の系列は0のまま。",
-            "rmsle": round(blend_score, 5),
+            "note": f"{notes[strategy]}{zero_note}",
+            "rmsle": round(best_score, 5),
             "status": "ok",
             "weight": 1.0,
-            "strategy": chosen,
+            "strategy": strategy,
+            "zero_window": zero_window,
             "weights": {k: round(v, 4) for k, v in weights.items()},
-            "candidates": {k: round(v[2], 5) for k, v in blends.items()},
+            "candidates": {k: round(v, 5) for k, v in per_strategy.items()},
             "wape": round(blend_business["wape"], 4),
             "bias": round(blend_business["bias"], 4),
             "under_rate": round(blend_business["under_rate"], 4),

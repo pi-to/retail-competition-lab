@@ -12,6 +12,7 @@ export type ModelRow = {
   error?: string;
   weights?: Record<string, number>;
   strategy?: string;
+  zero_window?: number;
   candidates?: Record<string, number>;
   top_features?: { feature: string; gain: number }[];
   wape?: number;

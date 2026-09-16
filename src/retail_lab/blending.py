@@ -40,10 +40,10 @@ def fit_log_weights(pred_map: dict[str, pd.DataFrame], actual: pd.DataFrame) -> 
     target = np.log1p(truth[TARGET].clip(lower=0).to_numpy())
 
     coefficients, _residual = nnls(matrix, target)
-    total = float(coefficients.sum())
-    if total <= 0:
+    if float(coefficients.sum()) <= 0:
         return inverse_rmsle_weights({name: 1.0 for name in names})
-    return {name: float(w / total) for name, w in zip(names, coefficients, strict=True) if w > 0}
+    # 正規化はしない。合計1に押し込むと、当てはめた最適点からずれてしまう。
+    return {name: float(w) for name, w in zip(names, coefficients, strict=True) if w > 0}
 
 
 def blend(

@@ -103,6 +103,18 @@ def test_fitted_weights_favor_the_model_that_matches_the_truth():
     assert weights["good"] > weights.get("bad", 0.0)
 
 
+def test_fitted_blend_is_never_worse_than_the_best_single_model():
+    """単体は重みの空間に含まれるので、当てはめた混合が検証窓で負けることはない。"""
+    truth = pd.DataFrame({"row_id": [1, 2, 3, 4], "target": [10.0, 20.0, 30.0, 40.0]})
+    preds = {
+        "close": pd.DataFrame({"row_id": [1, 2, 3, 4], "pred": [11.0, 19.0, 33.0, 37.0]}),
+        "off": pd.DataFrame({"row_id": [1, 2, 3, 4], "pred": [2.0, 40.0, 5.0, 90.0]}),
+    }
+    singles = {name: blending.score_against(frame, truth) for name, frame in preds.items()}
+    fitted = blending.blend(preds, blending.fit_log_weights(preds, truth))
+    assert blending.score_against(fitted, truth) <= min(singles.values()) + 1e-9
+
+
 def test_log_blend_of_identical_predictions_is_unchanged():
     preds = {
         "a": pd.DataFrame({"row_id": [1, 2], "series_id": ["s", "s"], "pred": [4.0, 9.0]}),
