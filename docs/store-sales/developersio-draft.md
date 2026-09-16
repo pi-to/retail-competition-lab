@@ -31,7 +31,7 @@ Kaggleの「Store Sales - Time Series Forecasting」に、Amazon Chronos-2、Goo
 | 祝日・プロモ特徴 + 再帰51% + Chronos-2 30% + 一括11% + 距離別8% | **0.38590** | 新Champion |
 
 公開LBは **0.39515** でした。ローカルとの差が0.005なので、以後の改善判断にこの検証を使えると考えています。
-現Champion 0.38893 はまだ提出前です。
+現Champion 0.38590 はまだ提出前です。
 
 ## うまくいった: Chronos-2に未来共変量を渡す
 

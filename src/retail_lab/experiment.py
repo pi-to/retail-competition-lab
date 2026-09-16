@@ -12,6 +12,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from retail_lab import DATE, ROW_ID, SERIES_ID, TARGET, blending
@@ -351,14 +352,25 @@ def run_experiment(
     # 0 は「後処理をしない」。窓を長く取り過ぎると、まだ売れている系列まで0にしてしまう
     windows = (0, 3, 7, 14, 21)
 
+    origin_val = split.train[DATE].max()
+    origin_test = labeled[DATE].max()
+    horizon_weights = blending.fit_log_weights_by_horizon(val_preds, split.val, origin_val)
+
     chosen: tuple[str, int] | None = None
     best_score = float("inf")
     best_frames: tuple[pd.DataFrame, pd.DataFrame] | None = None
     per_strategy: dict[str, float] = {}
+    chosen_weights: dict[str, float] = {}
+    chosen_horizon_weights: dict[int, dict[str, float]] | None = None
 
-    for name, weights in weight_options.items():
-        val_raw = blending.blend(val_preds, weights)
-        test_raw = blending.blend(test_preds, weights)
+    def consider(
+        name: str,
+        val_raw: pd.DataFrame,
+        test_raw: pd.DataFrame,
+        display_weights: dict[str, float],
+        by_horizon: dict[int, dict[str, float]] | None = None,
+    ) -> None:
+        nonlocal best_score, chosen, best_frames, chosen_weights, chosen_horizon_weights
         for window in windows:
             val_candidate = (
                 blending.zero_out_dead_series(split.train, val_raw, window) if window else val_raw
@@ -372,11 +384,29 @@ def run_experiment(
                     blending.zero_out_dead_series(labeled, test_raw, window) if window else test_raw
                 )
                 best_frames = (val_candidate, test_candidate)
+                chosen_weights = display_weights
+                chosen_horizon_weights = by_horizon
+
+    for name, weights in weight_options.items():
+        consider(
+            name, blending.blend(val_preds, weights), blending.blend(test_preds, weights), weights
+        )
+
+    consider(
+        "fitted_horizon",
+        blending.blend_by_horizon(val_preds, horizon_weights, origin_val),
+        blending.blend_by_horizon(test_preds, horizon_weights, origin_test),
+        {
+            name: float(np.mean([w.get(name, 0.0) for w in horizon_weights.values()]))
+            for name in val_preds
+        },
+        horizon_weights,
+    )
 
     assert chosen is not None and best_frames is not None
     strategy, zero_window = chosen
     val_blend, test_blend = best_frames
-    weights = weight_options[strategy]
+    weights = chosen_weights
     blend_business = blending.business_against(val_blend, split.val)
 
     for row in models_meta:
@@ -386,6 +416,7 @@ def run_experiment(
     notes = {
         "rule": "検証 RMSLE の逆数を重みにした。",
         "fitted": "検証窓で RMSLE を最小にする非負の重みを当てた。",
+        "fitted_horizon": "予測日ごとに非負の重みを当てた。再帰の後半劣化を日別に補う。",
         "single": f"混ぜると悪化したので {best_single} 単体を採用した。",
     }
     zero_note = (
@@ -404,6 +435,14 @@ def run_experiment(
             "strategy": strategy,
             "zero_window": zero_window,
             "weights": {k: round(v, 4) for k, v in weights.items()},
+            "weights_by_horizon": (
+                {
+                    str(step): {k: round(v, 4) for k, v in part.items()}
+                    for step, part in chosen_horizon_weights.items()
+                }
+                if chosen_horizon_weights is not None
+                else None
+            ),
             "candidates": {k: round(v, 5) for k, v in per_strategy.items()},
             "wape": round(blend_business["wape"], 4),
             "bias": round(blend_business["bias"], 4),

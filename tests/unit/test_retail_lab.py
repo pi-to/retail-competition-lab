@@ -105,6 +105,40 @@ def test_grouped_rmsle_lists_the_worst_group_first():
     assert rows[0]["rmsle"] > rows[1]["rmsle"]
 
 
+def test_horizon_blend_picks_the_model_that_matches_each_day():
+    """1日目に当たるモデルと2日目に当たるモデルを、日ごとに選べる。"""
+    truth = pd.DataFrame(
+        {
+            "row_id": [1, 2, 3, 4],
+            "date": pd.to_datetime(["2017-08-16", "2017-08-16", "2017-08-17", "2017-08-17"]),
+            "target": [10.0, 20.0, 30.0, 40.0],
+        }
+    )
+    preds = {
+        "early": pd.DataFrame(
+            {
+                "row_id": [1, 2, 3, 4],
+                "date": truth["date"],
+                "pred": [10.0, 20.0, 1.0, 1.0],
+            }
+        ),
+        "late": pd.DataFrame(
+            {
+                "row_id": [1, 2, 3, 4],
+                "date": truth["date"],
+                "pred": [1.0, 1.0, 30.0, 40.0],
+            }
+        ),
+    }
+    origin = pd.Timestamp("2017-08-15")
+    weights = blending.fit_log_weights_by_horizon(preds, truth, origin)
+    blended = blending.blend_by_horizon(preds, weights, origin)
+    assert blending.score_against(blended, truth) < blending.score_against(
+        blending.blend(preds, blending.fit_log_weights(preds, truth)), truth
+    )
+    assert blended.sort_values("row_id")["pred"].tolist() == pytest.approx([10.0, 20.0, 30.0, 40.0])
+
+
 def test_inverse_rmsle_weights_favor_the_better_model():
     weights = blending.inverse_rmsle_weights({"good": 0.2, "bad": 0.4})
     assert weights["good"] > weights["bad"]
