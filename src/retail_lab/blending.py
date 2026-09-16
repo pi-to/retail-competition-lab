@@ -273,6 +273,8 @@ def zero_out_dead_series(
     history: pd.DataFrame, pred: pd.DataFrame, lookback: int = 21
 ) -> pd.DataFrame:
     """直近 lookback 日がすべて0の系列は、扱いを止めたものとみなして0を出す。"""
+    if lookback <= 0 or SERIES_ID not in history.columns or TARGET not in history.columns:
+        return pred
     last = history[DATE].max()
     window = history[history[DATE] > last - pd.Timedelta(days=lookback)]
     totals = window.groupby(SERIES_ID)[TARGET].sum()
