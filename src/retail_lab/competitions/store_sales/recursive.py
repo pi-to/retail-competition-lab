@@ -272,7 +272,7 @@ def fit_predict(
             if gate is not None:
                 # RMSLE が最適になるのは expm1(log1p売上の期待値)。
                 # 売れない日の log1p は0なので、売れる確率をそのまま掛ければよい。
-                chance = gate.predict_proba(day_x)[:, 1]
+                chance = np.asarray(gate.predict_proba(day_x))[:, 1]
                 day["pred"] = np.clip(np.expm1(chance * np.clip(raw, 0, None)), 0, None)
             else:
                 day["pred"] = np.clip(raw if objective == "tweedie" else np.expm1(raw), 0, None)
