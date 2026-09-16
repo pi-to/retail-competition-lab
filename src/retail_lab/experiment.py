@@ -539,9 +539,7 @@ def reblend_cached(prepared: Prepared, out_dir: Path, source_run: Path) -> JsonD
 
     source = json.loads((source_run / "result.json").read_text(encoding="utf-8"))
     skip_ids = {"blend", "robust_min"}
-    models_meta = [
-        row for row in source.get("models", []) if row.get("id") not in skip_ids
-    ]
+    models_meta = [row for row in source.get("models", []) if row.get("id") not in skip_ids]
     if "robust_min" in val_preds:
         robust_score = blending.score_against(val_preds["robust_min"], split.val)
         models_meta.append(

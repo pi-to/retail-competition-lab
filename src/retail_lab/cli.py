@@ -38,9 +38,7 @@ def _parser() -> argparse.ArgumentParser:
     reblend_cmd.add_argument("--from-run", default="champion")
     reblend_cmd.add_argument("--label", default="reblend")
     reblend_cmd.add_argument("--out", type=Path, default=None)
-    sub.add_parser(
-        "rescore", help="保存済みRunに『隠して採点した点数』を入れて物差しを揃える"
-    )
+    sub.add_parser("rescore", help="保存済みRunに『隠して採点した点数』を入れて物差しを揃える")
     sub.add_parser("status", help="データの取得状況を見る")
     submit_cmd = sub.add_parser("submit", help="生成済みの submission.csv を Kaggle に提出する")
     submit_cmd.add_argument(

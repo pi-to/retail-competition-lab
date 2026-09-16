@@ -49,9 +49,7 @@ def prepare(root: Path, source: str) -> Prepared:
             CandidateModel(
                 id="recursive_short",
                 title="再帰 LightGBM（直近180日）",
-                note=(
-                    "履歴を180日に絞る。古い需要構造を捨て、間欠な系統の形を直近に合わせる。"
-                ),
+                note=("履歴を180日に絞る。古い需要構造を捨て、間欠な系統の形を直近に合わせる。"),
                 predict=partial(recursive.fit_predict, context_days=180),
                 org="custom",
             ),
@@ -62,9 +60,27 @@ def prepare(root: Path, source: str) -> Prepared:
                     "ゼロが多い売上向けの Tweedie 目的関数。"
                     "LINGERIE など間欠需要の過小予測を抑える。"
                 ),
-                predict=partial(
-                    recursive.fit_predict, context_days=365, objective="tweedie"
+                predict=partial(recursive.fit_predict, context_days=365, objective="tweedie"),
+                org="custom",
+            ),
+            CandidateModel(
+                id="recursive_intermittent",
+                title="再帰 LightGBM（売れない日と水準の動きを見る）",
+                note=(
+                    "最後に売れてからの日数、ゼロの割合、直近28日と112日の水準比を足す。"
+                    "LINGERIE の間欠需要と GROCERY II の水準変化向け。"
                 ),
+                predict=partial(recursive.fit_predict, intermittent=True),
+                org="custom",
+            ),
+            CandidateModel(
+                id="recursive_intermittent_short",
+                title="再帰 LightGBM（間欠特徴・直近180日）",
+                note=(
+                    "同じ特徴を直近180日だけで学習する。"
+                    "水準が変わった系統を、古い水準に引っ張られずに追う。"
+                ),
+                predict=partial(recursive.fit_predict, context_days=180, intermittent=True),
                 org="custom",
             ),
             CandidateModel(

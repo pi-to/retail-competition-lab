@@ -731,12 +731,8 @@ def test_recursive_tweedie_never_reads_future_targets_and_stays_nonnegative():
     changed = future.copy()
     changed["target"] = 999999.0
 
-    first, _ = fit_predict(
-        train, future, n_estimators=8, context_days=100, objective="tweedie"
-    )
-    second, _ = fit_predict(
-        train, changed, n_estimators=8, context_days=100, objective="tweedie"
-    )
+    first, _ = fit_predict(train, future, n_estimators=8, context_days=100, objective="tweedie")
+    second, _ = fit_predict(train, changed, n_estimators=8, context_days=100, objective="tweedie")
 
     assert first.sort_values("row_id")["pred"].tolist() == pytest.approx(
         second.sort_values("row_id")["pred"].tolist()
@@ -862,6 +858,92 @@ def test_recursive_drop_earthquake_does_not_read_future_targets():
     assert first.sort_values("row_id")["pred"].tolist() == pytest.approx(
         second.sort_values("row_id")["pred"].tolist()
     )
+
+
+def test_intermittent_features_match_between_training_and_recursion():
+    """学習側と再帰予測側で、同じ履歴からは同じ特徴が出る。"""
+    from retail_lab.competitions.store_sales import recursive
+
+    values = [0.0, 3.0, 0.0, 0.0, 5.0] * 30
+    dates = pd.date_range("2016-01-01", periods=len(values) + 1)
+    frame = pd.DataFrame(
+        {
+            "row_id": range(len(dates)),
+            "series_id": "1::A",
+            "date": dates,
+            "target": [*values, 7.0],
+            "family": "A",
+        }
+    )
+    featured = recursive._training_features(frame, intermittent=True)
+    last = featured.iloc[-1]
+    from_history = recursive._intermittent_of_history(values)
+
+    for name in recursive.INTERMITTENT_FEATURES:
+        assert float(last[name]) == pytest.approx(from_history[name]), name
+
+
+def test_intermittent_features_count_the_gap_since_the_last_sale():
+    from retail_lab.competitions.store_sales import recursive
+
+    assert recursive._days_since_sale_of_history([4.0, 0.0, 0.0]) == 3.0
+    assert recursive._days_since_sale_of_history([0.0, 0.0, 6.0]) == 1.0
+    assert recursive._days_since_sale_of_history([0.0] * 80) == float(recursive.SALE_GAP_CAP)
+    assert recursive._days_since_sale_of_history([]) == float(recursive.SALE_GAP_CAP)
+    # 予測値がわずかでも売れた扱いにならないよう、しきい値で切る
+    assert recursive._days_since_sale_of_history([9.0, 0.2]) == 2.0
+
+
+def test_recursive_intermittent_does_not_read_future_targets():
+    from retail_lab.competitions.store_sales.recursive import fit_predict
+
+    dates = pd.date_range("2017-01-01", periods=140)
+    rows = []
+    row_id = 0
+    for store in (1, 2):
+        for i, date in enumerate(dates):
+            rows.append(
+                {
+                    "row_id": row_id,
+                    "series_id": f"{store}::A",
+                    "date": date,
+                    "target": float((4 + store) if i % 4 == 0 else 0),
+                    "family": "A",
+                    "store_nbr": store,
+                    "type": "A",
+                    "cluster": store,
+                    "onpromotion": 0.0,
+                    "promo_log": 0.0,
+                    "oil": 50.0,
+                    "oil_lag7": 50.0,
+                    "dow": date.weekday(),
+                    "day": date.day,
+                    "month": date.month,
+                    "week": int(date.isocalendar().week),
+                    "is_weekend": int(date.weekday() >= 5),
+                    "is_payday": 0,
+                    "is_national_holiday": 0,
+                    "is_local_holiday": 0,
+                    "is_earthquake": 0,
+                    "transactions_lag16": 100.0,
+                    **EXOG_DEFAULTS,
+                }
+            )
+            row_id += 1
+    panel = pd.DataFrame(rows)
+    train = panel[panel["date"] < dates[-8]]
+    future = panel[panel["date"] >= dates[-8]]
+    changed = future.copy()
+    changed["target"] = 999999.0
+
+    first, ranked = fit_predict(train, future, n_estimators=8, context_days=140, intermittent=True)
+    second, _ = fit_predict(train, changed, n_estimators=8, context_days=140, intermittent=True)
+
+    assert first.sort_values("row_id")["pred"].tolist() == pytest.approx(
+        second.sort_values("row_id")["pred"].tolist()
+    )
+    assert (first["pred"] >= 0).all()
+    assert {str(item["feature"]) for item in ranked} >= {"recursive_days_since_sale"}
 
 
 def test_panel_adds_regional_holiday_eve_and_known_promo_leads(tmp_path: Path):

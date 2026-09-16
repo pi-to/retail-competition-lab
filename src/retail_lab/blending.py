@@ -256,9 +256,7 @@ def _fit_plan(
     if strategy == "fitted_horizon":
         return {
             "kind": "horizon",
-            "by_horizon": fit_log_weights_by_horizon(
-                pred_map, actual, prediction_origin(pred_map)
-            ),
+            "by_horizon": fit_log_weights_by_horizon(pred_map, actual, prediction_origin(pred_map)),
         }
     if strategy == "fitted_family":
         by_family = fit_log_weights_by_family(pred_map, actual)
@@ -342,9 +340,7 @@ def _drop_models_that_do_not_earn_their_place(
         for name in sorted(kept):
             trial = {key: frame for key, frame in kept.items() if key != name}
             try:
-                trials[name] = _two_fold_score(
-                    trial, val, halves, strategy, alpha, train, window
-                )
+                trials[name] = _two_fold_score(trial, val, halves, strategy, alpha, train, window)
             except (ValueError, KeyError):
                 continue
         if not trials:
@@ -384,9 +380,7 @@ def choose_blend(
             label = strategy if alpha == 1.0 else f"{strategy}_shrunk{alpha:g}"
             for window in windows:
                 try:
-                    value = _two_fold_score(
-                        val_preds, val, halves, strategy, alpha, train, window
-                    )
+                    value = _two_fold_score(val_preds, val, halves, strategy, alpha, train, window)
                 except (ValueError, KeyError):
                     continue
                 per_strategy[label] = min(per_strategy.get(label, float("inf")), value)
