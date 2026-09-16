@@ -76,6 +76,9 @@ const SHORT: Record<string, string> = {
   "honest-selection-v1": "採点を正直に",
   "honest-subset-blend-v1": "顔ぶれを絞る",
   "intermittent-recursive-v1": "売れない間隔を教える",
+  "intermittent-diverse-v1": "外れ方を変えた版",
+  "zero-floor-v1": "小さい予測を0に",
+  "hurdle-recursive-v1": "売れるか×いくら",
   "foundation-blend-v1": "最初の提出",
 };
 
