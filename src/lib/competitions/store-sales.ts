@@ -144,9 +144,9 @@ const storeSales: CompetitionContent = {
     },
   ],
   nextSteps: [
-    "LINGERIE / GROCERY II など誤差の大きい系統だけ、別のモデル構造を試す。",
+    "GROCERY II（検証RMSLE約0.571）だけ別構造を試す。",
     "予測12〜16日目の劣化を、過学習しない範囲で日別に補う。",
-    "公開LBでファミリー別混合 0.3755 が再現するか確認する。",
+    "公開LBで sparse-recursive-v1（0.37441）が再現するか確認する。",
   ],
   demoNote: "デモは公式と同じ列名の縮小データ（4店舗 × 6ファミリー）です。",
 };
