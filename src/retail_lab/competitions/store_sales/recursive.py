@@ -83,11 +83,16 @@ def fit_predict(
     n_estimators: int = 320,
     context_days: int = 730,
     drop_earthquake: bool = False,
+    objective: str = "regression",
+    tweedie_variance_power: float = 1.2,
 ) -> tuple[pd.DataFrame, list[dict[str, float | str]]]:
     """ファミリーごとに学習し、未来を日ごとに再帰予測する。
 
     `future[TARGET]` は一切読まない。検証時に答えが同じDataFrame内にあっても漏洩しない。
+    `objective="tweedie"` はゼロが多い系統向け。予測は非負のまま出す。
     """
+    if objective not in {"regression", "tweedie"}:
+        raise ValueError(f"未対応の objective です: {objective}")
     cutoff = train[DATE].max() - pd.Timedelta(days=context_days)
     recent = train[train[DATE] > cutoff]
     if drop_earthquake and "is_earthquake" in recent.columns:
@@ -113,24 +118,28 @@ def fit_predict(
             x[column] = x[column].astype("category")
             categories[column] = x[column].cat.categories
 
-        model = LGBMRegressor(
-            n_estimators=n_estimators,
-            learning_rate=0.045,
-            num_leaves=31,
-            max_depth=-1,
-            min_child_samples=30,
-            subsample=0.85,
-            colsample_bytree=0.85,
-            reg_lambda=0.5,
-            random_state=42,
-            verbose=-1,
-            n_jobs=-1,
-        )
-        model.fit(
-            x,
-            np.log1p(family_train[TARGET].clip(lower=0)),
-            categorical_feature=CATEGORICALS,
-        )
+        params: dict[str, Any] = {
+            "n_estimators": n_estimators,
+            "learning_rate": 0.045,
+            "num_leaves": 31,
+            "max_depth": -1,
+            "min_child_samples": 30,
+            "subsample": 0.85,
+            "colsample_bytree": 0.85,
+            "reg_lambda": 0.5,
+            "random_state": 42,
+            "verbose": -1,
+            "n_jobs": -1,
+        }
+        if objective == "tweedie":
+            params["objective"] = "tweedie"
+            params["tweedie_variance_power"] = tweedie_variance_power
+            target = family_train[TARGET].clip(lower=0)
+        else:
+            target = np.log1p(family_train[TARGET].clip(lower=0))
+
+        model = LGBMRegressor(**params)
+        model.fit(x, target, categorical_feature=CATEGORICALS)
         for name, gain in zip(FEATURES, model.feature_importances_, strict=True):
             importance[name] += float(gain)
 
@@ -148,7 +157,8 @@ def fit_predict(
             day_x = pd.DataFrame(rows, index=day.index)[FEATURES]
             for column in CATEGORICALS:
                 day_x[column] = pd.Categorical(day_x[column], categories=categories[column])
-            day["pred"] = np.clip(np.expm1(model.predict(day_x)), 0, None)
+            raw = model.predict(day_x)
+            day["pred"] = np.clip(raw if objective == "tweedie" else np.expm1(raw), 0, None)
             for sid, pred in zip(day[SERIES_ID], day["pred"], strict=True):
                 histories.setdefault(str(sid), []).append(float(pred))
             family_predictions.append(day[OUTPUT])

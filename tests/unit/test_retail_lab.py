@@ -561,6 +561,60 @@ def test_recursive_forecast_never_reads_future_targets():
     )
 
 
+def test_recursive_tweedie_never_reads_future_targets_and_stays_nonnegative():
+    from retail_lab.competitions.store_sales.recursive import fit_predict
+
+    dates = pd.date_range("2017-01-01", periods=100)
+    train_rows = []
+    future_rows = []
+    row_id = 0
+    for store in (1, 2):
+        for i, date in enumerate(dates):
+            row = {
+                "row_id": row_id,
+                "series_id": f"{store}::A",
+                "date": date,
+                "target": float((10 + store + i % 7) if i % 3 else 0),
+                "family": "A",
+                "store_nbr": store,
+                "type": "A",
+                "cluster": store,
+                "onpromotion": 0.0,
+                "promo_log": 0.0,
+                "oil": 50.0,
+                "oil_lag7": 50.0,
+                "dow": date.weekday(),
+                "day": date.day,
+                "month": date.month,
+                "week": int(date.isocalendar().week),
+                "is_weekend": int(date.weekday() >= 5),
+                "is_payday": 0,
+                "is_national_holiday": 0,
+                "is_local_holiday": 0,
+                "is_earthquake": 0,
+                "transactions_lag16": 100.0,
+                **EXOG_DEFAULTS,
+            }
+            row_id += 1
+            (train_rows if i < 93 else future_rows).append(row)
+    train = pd.DataFrame(train_rows)
+    future = pd.DataFrame(future_rows)
+    changed = future.copy()
+    changed["target"] = 999999.0
+
+    first, _ = fit_predict(
+        train, future, n_estimators=8, context_days=100, objective="tweedie"
+    )
+    second, _ = fit_predict(
+        train, changed, n_estimators=8, context_days=100, objective="tweedie"
+    )
+
+    assert first.sort_values("row_id")["pred"].tolist() == pytest.approx(
+        second.sort_values("row_id")["pred"].tolist()
+    )
+    assert (first["pred"] >= 0).all()
+
+
 def test_recursive_forecast_returns_every_row_nonnegative():
     from retail_lab.competitions.store_sales.recursive import fit_predict
 

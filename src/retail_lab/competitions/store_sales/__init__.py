@@ -47,6 +47,27 @@ def prepare(root: Path, source: str) -> Prepared:
                 org="custom",
             ),
             CandidateModel(
+                id="recursive_short",
+                title="再帰 LightGBM（直近180日）",
+                note=(
+                    "履歴を180日に絞る。古い需要構造を捨て、間欠な系統の形を直近に合わせる。"
+                ),
+                predict=partial(recursive.fit_predict, context_days=180),
+                org="custom",
+            ),
+            CandidateModel(
+                id="recursive_tweedie",
+                title="再帰 LightGBM（Tweedie・365日）",
+                note=(
+                    "ゼロが多い売上向けの Tweedie 目的関数。"
+                    "LINGERIE など間欠需要の過小予測を抑える。"
+                ),
+                predict=partial(
+                    recursive.fit_predict, context_days=365, objective="tweedie"
+                ),
+                org="custom",
+            ),
+            CandidateModel(
                 id="direct_horizon_lgbm",
                 title="予測距離別 LightGBM",
                 note=(
