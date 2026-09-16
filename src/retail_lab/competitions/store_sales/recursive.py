@@ -71,7 +71,7 @@ def fit_predict(
     train: pd.DataFrame,
     future: pd.DataFrame,
     *,
-    n_estimators: int = 220,
+    n_estimators: int = 320,
     context_days: int = 730,
 ) -> tuple[pd.DataFrame, list[dict[str, float | str]]]:
     """ファミリーごとに学習し、未来を日ごとに再帰予測する。
