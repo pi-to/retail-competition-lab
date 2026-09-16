@@ -370,11 +370,13 @@ def _two_fold_score(
     *,
     calibrate: bool = False,
     calibrate_shrink: float = 1.0,
+    single_direction: bool = False,
 ) -> float:
-    """片側で重みを当てはめ、もう片側で採点する。両方向やって平均する。"""
+    """片側で重みを当てはめ、もう片側で採点する。既定は両方向やって平均する。"""
     left, right = halves
     total = 0.0
-    for fit_ids, hold_ids in ((left, right), (right, left)):
+    directions = ((left, right),) if single_direction else ((left, right), (right, left))
+    for fit_ids, hold_ids in directions:
         fit_actual = val[val[ROW_ID].isin(fit_ids)]
         hold_actual = val[val[ROW_ID].isin(hold_ids)]
         plan = _fit_plan(strategy, _subset(pred_map, fit_ids), fit_actual, alpha)
@@ -388,7 +390,7 @@ def _two_fold_score(
             scales = fit_family_log_scales(fit_candidate, fit_actual, shrink=calibrate_shrink)
             hold_candidate = apply_family_log_scales(hold_candidate, scales)
         total += score_against(hold_candidate, hold_actual)
-    return total / 2.0
+    return total / len(directions)
 
 
 def family_row_ids(pred_map: dict[str, pd.DataFrame]) -> dict[str, set[Any]]:
@@ -408,10 +410,17 @@ def _family_fold_score(
     window: int,
     floor: float,
     rows: set[Any],
+    *,
+    single_direction: bool = False,
 ) -> float:
-    """1つの売り場だけを、見ていない系列で採点する。"""
+    """1つの売り場だけを、見ていない系列で採点する。
+
+    `single_direction=True` なら片側で当てはめて反対側で採点する1回だけ。
+    顔ぶれの選び方自体を診断するとき、採点に使う行を選択へ混ぜないために使う。
+    """
     total = 0.0
-    for fit_ids, hold_ids in (halves, (halves[1], halves[0])):
+    directions = (halves,) if single_direction else (halves, (halves[1], halves[0]))
+    for fit_ids, hold_ids in directions:
         fit = fit_ids & rows
         hold = hold_ids & rows
         if not fit or not hold:
@@ -422,7 +431,7 @@ def _family_fold_score(
         held = zero_out_dead_series(train, held, window) if window else held
         held = snap_small_to_zero(held, floor)
         total += score_against(held, val[val[ROW_ID].isin(hold)])
-    return total / 2.0
+    return total / len(directions)
 
 
 def prune_by_family(
@@ -433,6 +442,8 @@ def prune_by_family(
     window: int,
     floor: float = 0.0,
     minimum: int = 1,
+    *,
+    single_direction: bool = False,
 ) -> dict[str, list[str]]:
     """売り場ごとに顔ぶれを選ぶ。
 
@@ -446,7 +457,9 @@ def prune_by_family(
     for family, rows in family_row_ids(pred_map).items():
         kept = dict(pred_map)
         try:
-            best = _family_fold_score(kept, val, halves, train, window, floor, rows)
+            best = _family_fold_score(
+                kept, val, halves, train, window, floor, rows, single_direction=single_direction
+            )
         except (ValueError, KeyError):
             subsets[family] = sorted(pred_map)
             continue
@@ -456,7 +469,14 @@ def prune_by_family(
                 trial = {key: frame for key, frame in kept.items() if key != name}
                 try:
                     trials[name] = _family_fold_score(
-                        trial, val, halves, train, window, floor, rows
+                        trial,
+                        val,
+                        halves,
+                        train,
+                        window,
+                        floor,
+                        rows,
+                        single_direction=single_direction,
                     )
                 except (ValueError, KeyError):
                     continue
@@ -512,6 +532,55 @@ def _family_subsets_two_fold_score(
     return total / 2.0
 
 
+def cross_fold_rule_scores(
+    pred_map: dict[str, pd.DataFrame],
+    val: pd.DataFrame,
+    halves: tuple[set[Any], set[Any]],
+    train: pd.DataFrame,
+    window: int = 0,
+    floor: float = 0.0,
+    alpha: float = 1.0,
+) -> dict[str, float]:
+    """顔ぶれの選び方そのものを、選ぶのに使っていない行で採点する。
+
+    いつもの二分割は「片側で重みを当て、もう片側で採点」する。しかし顔ぶれを選ぶ
+    ときに両方向の平均を見ていると、採点する行を選択にも使ってしまう。ここでは
+    片側だけで顔ぶれを決め、反対側で採点する（両向きの平均）。全体で1つの顔ぶれと、
+    売り場ごとの顔ぶれを、同じ条件で比べるための診断。
+    """
+    left, right = halves
+    totals = {"global": 0.0, "per_family": 0.0}
+    for select, evaluate in ((left, right), (right, left)):
+        select_halves = (select, evaluate)
+        chosen, _ = _drop_models_that_do_not_earn_their_place(
+            pred_map,
+            val,
+            select_halves,
+            "fitted_family",
+            alpha,
+            train,
+            window,
+            single_direction=True,
+        )
+        subsets = prune_by_family(
+            pred_map, val, select_halves, train, window, floor, single_direction=True
+        )
+        fit_actual = val[val[ROW_ID].isin(evaluate)]
+        hold_actual = val[val[ROW_ID].isin(select)]
+
+        kept = {name: pred_map[name] for name in chosen}
+        plan = _fit_plan("fitted_family", _subset(kept, evaluate), fit_actual, alpha)
+        held = _apply_plan(plan, _subset(kept, select))
+        held = zero_out_dead_series(train, held, window) if window else held
+        totals["global"] += score_against(snap_small_to_zero(held, floor), hold_actual)
+
+        weights = fit_family_subset_weights(_subset(pred_map, evaluate), fit_actual, subsets)
+        held = blend_by_family(_subset(pred_map, select), weights)
+        held = zero_out_dead_series(train, held, window) if window else held
+        totals["per_family"] += score_against(snap_small_to_zero(held, floor), hold_actual)
+    return {name: value / 2.0 for name, value in totals.items()}
+
+
 def _drop_models_that_do_not_earn_their_place(
     pred_map: dict[str, pd.DataFrame],
     val: pd.DataFrame,
@@ -521,6 +590,8 @@ def _drop_models_that_do_not_earn_their_place(
     train: pd.DataFrame,
     window: int,
     minimum: int = 2,
+    *,
+    single_direction: bool = False,
 ) -> tuple[list[str], float]:
     """1つ外して良くなるモデルを順に落とす。
 
@@ -528,13 +599,24 @@ def _drop_models_that_do_not_earn_their_place(
     見ていない系列で採点して、悪化させるモデルだけを外す。
     """
     kept = dict(pred_map)
-    best = _two_fold_score(kept, val, halves, strategy, alpha, train, window)
+    best = _two_fold_score(
+        kept, val, halves, strategy, alpha, train, window, single_direction=single_direction
+    )
     while len(kept) > minimum:
         trials: dict[str, float] = {}
         for name in sorted(kept):
             trial = {key: frame for key, frame in kept.items() if key != name}
             try:
-                trials[name] = _two_fold_score(trial, val, halves, strategy, alpha, train, window)
+                trials[name] = _two_fold_score(
+                    trial,
+                    val,
+                    halves,
+                    strategy,
+                    alpha,
+                    train,
+                    window,
+                    single_direction=single_direction,
+                )
             except (ValueError, KeyError):
                 continue
         if not trials:

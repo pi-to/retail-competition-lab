@@ -321,6 +321,22 @@ def test_choose_blend_can_pick_a_different_lineup_per_family():
     assert weights["A"].get("b_specialist", 0.0) < 0.05
 
 
+def test_cross_fold_rule_scores_judges_both_rules_on_rows_it_did_not_select_on():
+    """顔ぶれの選び方そのものを、選択に使っていない行で比べる。"""
+    preds, truth = _family_panel_preds(noise=0.05)
+    rng = np.random.default_rng(5)
+    noise_only = preds["early"].copy()
+    noise_only["pred"] = rng.uniform(1, 120, len(noise_only))
+    preds["noise"] = noise_only
+    train = pd.DataFrame({"date": pd.to_datetime(["2017-08-15"])})
+    halves = blending.series_halves(preds)
+
+    scores = blending.cross_fold_rule_scores(preds, truth, halves, train)
+
+    assert set(scores) == {"global", "per_family"}
+    assert all(value > 0 for value in scores.values())
+
+
 def test_fit_family_subset_weights_only_uses_the_models_left_in_that_family():
     preds, truth = _family_panel_preds()
     subsets = {"A": ["early"], "B": ["late"], "C": ["early", "late"]}
