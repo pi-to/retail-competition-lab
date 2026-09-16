@@ -1,0 +1,9 @@
+date,type,locale,locale_name,description,transferred
+2017-01-01,Holiday,National,Ecuador,New Year,False
+2017-02-27,Holiday,National,Ecuador,Carnival,False
+2017-04-14,Holiday,National,Ecuador,Good Friday,False
+2017-05-01,Holiday,National,Ecuador,Labor Day,False
+2017-05-24,Holiday,National,Ecuador,Battle of Pichincha,False
+2017-08-10,Holiday,National,Ecuador,Independence,False
+2017-08-15,Holiday,Local,Quito,Fundacion de Quito,False
+2017-08-24,Holiday,National,Ecuador,Demo National,False
