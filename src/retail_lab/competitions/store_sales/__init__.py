@@ -251,6 +251,31 @@ def prepare(root: Path, source: str) -> Prepared:
                 org="custom",
             ),
             CandidateModel(
+                id="direct_promo_context",
+                title="予測距離別 LightGBM（全店の特売の強さ）",
+                note=(
+                    "同じ売り場を全54店でどれだけ特売にしているかを足す。"
+                    "特売の予定は提出期間も分かっているので、遠い日でも使える。"
+                ),
+                predict=partial(direct.fit_predict, intermittent=True, promo_context=True),
+                org="custom",
+            ),
+            CandidateModel(
+                id="direct_promo_hurdle",
+                title="予測距離別 LightGBM（特売の強さ × 2段構え）",
+                note=(
+                    "全店の特売の強さを見ながら、売れる確率と量を分けて学ぶ。"
+                    "小さめの食料品のように、特売でだけ跳ねる棚向け。"
+                ),
+                predict=partial(
+                    direct.fit_predict,
+                    intermittent=True,
+                    hurdle=True,
+                    promo_context=True,
+                ),
+                org="custom",
+            ),
+            CandidateModel(
                 id="tsb_intermittent",
                 title="TSB（売れる頻度 × 売れたときの量）",
                 note=(

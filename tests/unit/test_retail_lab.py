@@ -1109,6 +1109,90 @@ def test_direct_peer_context_never_reads_future_targets_and_uses_local_peers():
     assert names >= {"cluster_family_mean_7", "city_family_mean_7", "store_to_family_ratio_28"}
 
 
+def _promo_panel(days: int = 160, horizon: int = 4) -> pd.DataFrame:
+    """特売の日だけよく売れる2店舗。特売を見ているかを試せる。"""
+    dates = pd.date_range("2017-01-01", periods=days + horizon)
+    rows = []
+    row_id = 0
+    for store in (1, 2):
+        for i, date in enumerate(dates):
+            promo = 12.0 if i % 7 == store else 0.0
+            rows.append(
+                {
+                    "row_id": row_id,
+                    "series_id": f"{store}::A",
+                    "date": date,
+                    "target": 40.0 + 30.0 * (promo > 0) if i < days else np.nan,
+                    "family": "A",
+                    "store_nbr": store,
+                    "type": "A",
+                    "cluster": store,
+                    "onpromotion": promo,
+                    "promo_log": float(np.log1p(promo)),
+                    "oil": 50.0,
+                    "oil_lag7": 50.0,
+                    "dow": date.weekday(),
+                    "day": date.day,
+                    "month": date.month,
+                    "week": int(date.isocalendar().week),
+                    "is_weekend": int(date.weekday() >= 5),
+                    "is_payday": 0,
+                    "is_national_holiday": 0,
+                    "is_local_holiday": 0,
+                    "is_earthquake": 0,
+                    "transactions_lag16": 100.0,
+                    **EXOG_DEFAULTS,
+                }
+            )
+            row_id += 1
+    return pd.DataFrame(rows)
+
+
+def test_direct_promo_context_reads_future_promos_but_not_future_sales():
+    """特売の予定は未来も分かるので使う。未来の売上は使わない。"""
+    from retail_lab.competitions.store_sales.direct import fit_predict
+
+    split = split_panel(_promo_panel(), 4)
+    kwargs = {
+        "n_estimators": 60,
+        "context_days": 160,
+        "intermittent": True,
+        "promo_context": True,
+    }
+
+    changed_target = split.val.copy()
+    changed_target["target"] = 999999.0
+    first, ranked = fit_predict(split.train, split.val, **kwargs)
+    same, _ = fit_predict(split.train, changed_target, **kwargs)
+    assert first.sort_values("row_id")["pred"].tolist() == pytest.approx(
+        same.sort_values("row_id")["pred"].tolist()
+    )
+
+    changed_promo = split.val.copy()
+    changed_promo["onpromotion"] = 0.0
+    changed_promo["promo_log"] = 0.0
+    different, _ = fit_predict(split.train, changed_promo, **kwargs)
+    assert different.sort_values("row_id")["pred"].tolist() != pytest.approx(
+        first.sort_values("row_id")["pred"].tolist()
+    )
+    assert {str(item["feature"]) for item in ranked} >= {"store_promo_share"}
+
+
+def test_direct_promo_context_rejects_combinations_it_cannot_serve():
+    from retail_lab.competitions.store_sales.direct import fit_predict
+
+    with pytest.raises(ValueError):
+        fit_predict(pd.DataFrame(), pd.DataFrame(), promo_context=True)
+    with pytest.raises(ValueError):
+        fit_predict(
+            pd.DataFrame(),
+            pd.DataFrame(),
+            intermittent=True,
+            promo_context=True,
+            peer_context=True,
+        )
+
+
 def test_recursive_drop_earthquake_does_not_read_future_targets():
     from retail_lab.competitions.store_sales.recursive import fit_predict
 

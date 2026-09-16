@@ -13,6 +13,11 @@ FAMILY_TREND_FEATURES = [
     "family_level_ratio_7_56",
     "family_same_dow_4",
 ]
+PROMO_CONTEXT_FEATURES = [
+    "family_promo_mean",
+    "family_promo_vs_normal",
+    "store_promo_share",
+]
 PEER_FEATURES = [
     "cluster_family_mean_7",
     "cluster_family_level_ratio_7_56",
@@ -59,6 +64,33 @@ def family_states(frame: pd.DataFrame) -> pd.DataFrame:
     """各売り場の全店舗平均から、共通する直近の勢いを日ごとに作る。"""
     states = rolling_group_states(frame, ["family"], "family")
     return states[["family", DATE, *FAMILY_TREND_FEATURES]]
+
+
+def attach_promo_context(
+    frame: pd.DataFrame,
+    history: pd.DataFrame,
+) -> pd.DataFrame:
+    """全店で同じ売り場をどれだけ特売にしているかを足す。
+
+    特売の予定は提出期間も分かっているので、未来の値をそのまま使ってよい。
+    売上（target）は一切見ない。平常時の強さだけを学習期間から作る。
+    """
+    out = frame.copy()
+    daily = frame.groupby(["family", DATE])["onpromotion"].mean().rename("family_promo_mean")
+    normal = (
+        history.groupby(["family", DATE])["onpromotion"]
+        .mean()
+        .groupby("family")
+        .mean()
+        .rename("family_promo_normal")
+    )
+    keys = pd.MultiIndex.from_arrays([out["family"], out[DATE]])
+    family_mean = daily.reindex(keys).to_numpy()
+    family_normal = out["family"].map(normal).to_numpy()
+    out["family_promo_mean"] = family_mean
+    out["family_promo_vs_normal"] = (family_mean + 1.0) / (family_normal + 1.0)
+    out["store_promo_share"] = (out["onpromotion"].to_numpy() + 1.0) / (family_mean + 1.0)
+    return out
 
 
 def peer_states(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:

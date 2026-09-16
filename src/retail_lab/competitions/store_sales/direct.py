@@ -17,9 +17,13 @@ from retail_lab import DATE, ROW_ID, SERIES_ID, TARGET
 from retail_lab.competitions.store_sales.context import (
     FAMILY_TREND_FEATURES,
     PEER_FEATURES,
+    PROMO_CONTEXT_FEATURES,
 )
 from retail_lab.competitions.store_sales.context import (
     attach_by_origin as _attach_by_origin,
+)
+from retail_lab.competitions.store_sales.context import (
+    attach_promo_context as _attach_promo_context,
 )
 from retail_lab.competitions.store_sales.context import (
     family_states as _family_states,
@@ -43,6 +47,7 @@ FEATURES = list(BASE_DIRECT)
 INTERMITTENT_DIRECT = [*BASE_DIRECT, *INTERMITTENT_FEATURES]
 FAMILY_TREND_DIRECT = [*INTERMITTENT_DIRECT, *FAMILY_TREND_FEATURES]
 PEER_CONTEXT_DIRECT = [*FAMILY_TREND_DIRECT, *PEER_FEATURES]
+PROMO_CONTEXT_DIRECT = [*FAMILY_TREND_DIRECT, *PROMO_CONTEXT_FEATURES]
 CATEGORICALS = ["store_nbr", "type", "cluster", "family"]
 OUTPUT = [ROW_ID, DATE, SERIES_ID, "pred"]
 
@@ -225,6 +230,7 @@ def fit_predict(
     hurdle: bool = False,
     family_trend: bool = False,
     peer_context: bool = False,
+    promo_context: bool = False,
 ) -> tuple[pd.DataFrame, list[dict[str, float | str]]]:
     """未来の正解を読まず、全予測日を直接予測する。
 
@@ -232,6 +238,7 @@ def fit_predict(
     `hurdle=True` は「売れるか」と「売れたらいくらか」を分けて学び、掛けて戻す。
     `family_trend=True` は全店の売り場平均の勢いを足す。
     `peer_context=True` はクラスター・都市の同売り場勢いと、店の相対強度も足す。
+    `promo_context=True` は全店で同じ売り場をどれだけ特売にしているかを足す。
     """
     if hurdle and not intermittent:
         raise ValueError("hurdle は intermittent=True のときだけ使えます")
@@ -239,10 +246,16 @@ def fit_predict(
         raise ValueError("family_trend は intermittent=True のときだけ使えます")
     if peer_context and not intermittent:
         raise ValueError("peer_context は intermittent=True のときだけ使えます")
-    use_family = family_trend or peer_context
+    if promo_context and not intermittent:
+        raise ValueError("promo_context は intermittent=True のときだけ使えます")
+    if promo_context and peer_context:
+        raise ValueError("promo_context と peer_context は同時に使えません")
+    use_family = family_trend or peer_context or promo_context
     columns = (
         PEER_CONTEXT_DIRECT
         if peer_context
+        else PROMO_CONTEXT_DIRECT
+        if promo_context
         else FAMILY_TREND_DIRECT
         if use_family
         else INTERMITTENT_DIRECT
@@ -267,6 +280,8 @@ def fit_predict(
         featured = _attach_family_trend(featured, family_states, train_horizons)
     if peer_context and peer is not None:
         featured = _attach_peer_context(featured, peer[0], peer[1], peer[2], train_horizons)
+    if promo_context:
+        featured = _attach_promo_context(featured, recent)
     featured = featured[featured[DATE] > train[DATE].max() - pd.Timedelta(days=context_days)]
     featured = featured.dropna(subset=DYNAMIC_LAGS)
 
@@ -304,6 +319,8 @@ def fit_predict(
             future_clean[HORIZON_FEATURE].to_numpy(),
             fixed_origin=origin,
         )
+    if promo_context:
+        future_clean = _attach_promo_context(future_clean, recent)
 
     x = featured[columns].copy()
     future_x = future_clean[columns].copy()
