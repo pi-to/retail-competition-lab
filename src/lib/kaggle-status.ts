@@ -27,7 +27,10 @@ async function exists(file: string) {
   }
 }
 
+/** `retail_lab/kaggle.py` の auth_header と同じ判断をする。 */
 async function hasCredentials(root: string) {
+  if (process.env.KAGGLE_API_TOKEN) return true;
+  if (process.env.KAGGLE_KEY) return true;
   if (process.env.KAGGLE_USERNAME && process.env.KAGGLE_KEY) return true;
   const home = process.env.HOME ?? "";
   for (const candidate of [
@@ -38,7 +41,10 @@ async function hasCredentials(root: string) {
       const blob = JSON.parse(await readFile(candidate, "utf8")) as {
         username?: string;
         key?: string;
+        token?: string;
+        api_token?: string;
       };
+      if (blob.token || blob.api_token) return true;
       if (blob.username && blob.key) return true;
     } catch {
       // 読めないファイルは未設定として扱う
