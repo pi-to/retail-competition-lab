@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
+from pathlib import Path  # noqa: E402 - sys.path を先に通すため
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from engine import run  # noqa: E402
+from kaggle_data import KaggleError  # noqa: E402
 
 if __name__ == "__main__":
     import argparse
@@ -19,4 +20,9 @@ if __name__ == "__main__":
     parser.add_argument("--skip-foundation", action="store_true")
     args = parser.parse_args()
     out = args.out or (args.root / "outputs")
-    run(args.root, args.source, out, skip_foundation=args.skip_foundation)
+    try:
+        run(args.root, args.source, out, skip_foundation=args.skip_foundation)
+    except KaggleError as exc:
+        message = f"{exc} {exc.hint}".strip()
+        print(message, file=sys.stderr)
+        raise SystemExit(1) from None

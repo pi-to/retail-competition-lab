@@ -1,20 +1,30 @@
 # Store Sales Lab
 
-[Kaggle Store Sales — Time Series Forecasting](https://www.kaggle.com/competitions/store-sales-time-series-forecasting/data) を、後から人間が読み返せる4モデルで解く Web アプリです。
+[Kaggle Store Sales — Time Series Forecasting](https://www.kaggle.com/competitions/store-sales-time-series-forecasting/data) を、非エンジニアでも結果が読める形で解く Web アプリです。
 
-目標はリーダーボード上位と、その手順の理解です。手法の本文は [METHOD.md](METHOD.md) に5行で書いてあります。
+## 何の問題か
 
-## 何をするか
+エクアドルの食品スーパー Favorita の発注担当が、店舗×商品ファミリーごとに16日先までの売上を毎日決めている。54店舗 × 33ファミリー = 1,782 系列 × 16日 = 28,512 個の予測が、そのまま発注量になる。少なく見れば欠品、多く見れば廃棄。両方を同時に減らすのが狙いです。
+
+採点は RMSLE。なぜその指標が妥当かは [METHOD.md](METHOD.md) に具体例つきで書いてあります。
+
+## 画面でできること
+
+1. コンペの概要（誰が困り、何を当て、どう効くか）と指標の妥当性を読む。
+2. 公式データを Kaggle API から取得する。
+3. 4モデルを同じ検証窓で走らせて採点する。
+4. 検証結果を「誤差率・偏り・欠品側の割合」で読む（クライアント報告用）。
+5. `submission.csv` をダウンロードする。
+
+## モデル
 
 | モデル | 役割 |
 | --- | --- |
 | 季節ナイーブ | 同じ曜日の直近実績。下限 |
-| LightGBM | プロモ・祝日・原油・給料日を店横断で学習 |
+| LightGBM | プロモ・祝日・原油・給料日・店属性を店横断で学習 |
 | Amazon Chronos-2 | 系列 + 未来共変量のゼロショット |
 | Google TimesFM 2.5 | AWS に依らない単変量ゼロショット |
 | 混合 | 検証 RMSLE の逆数重み + ゼロ系列の後処理 |
-
-デモデータは公式と同じ列名の縮小セットです。公式 CSV を `data/kaggle/` に置けば提出用 `submission.csv` が出ます。
 
 ## 起動
 
@@ -24,20 +34,42 @@ npm install
 npm run dev
 ```
 
-ブラウザで表示した画面の「予測を実行」を押します。初回は Hugging Face から Chronos-2 と TimesFM の重みを取ります。
+http://127.0.0.1:43123 が開きます。「予測を実行」でデモデータ（4店舗 × 6ファミリー）が採点されます。初回は Hugging Face から Chronos-2 と TimesFM の重みを取得します。
 
-CLI だけ使う場合:
+## 公式データの取得
+
+画面の「Kaggle から取得」を押すと API でダウンロードします。事前に2つ必要です。
+
+1. コンペページで Join Competition（規約同意）。
+2. Kaggle の [Settings](https://www.kaggle.com/settings) で API トークンを作る。
+
+認証情報は次のどちらかで渡します。
 
 ```bash
-python3 python/run.py --source demo
-# 公式データ
-python3 python/run.py --source kaggle
+# 方法1: .env.local に書く（Next.js が読み込み、Python にも渡る）
+KAGGLE_USERNAME=your_name
+KAGGLE_KEY=your_key
 ```
 
-公式ファイル:
+```bash
+# 方法2: ダウンロードした kaggle.json をリポジトリ直下に置く
+```
 
-`train.csv` `test.csv` `stores.csv` `oil.csv` `holidays_events.csv` `transactions.csv` を `data/kaggle/` へ。
+CLI だけで使う場合:
 
-## なぜこの分け方か
+```bash
+python3 python/kaggle_data.py --status   # 取得状況の確認
+python3 python/kaggle_data.py            # ダウンロード
+python3 python/run.py --source kaggle    # 公式データで実行（未取得なら自動取得）
+python3 python/run.py --source demo      # デモデータで実行
+```
 
-基盤モデルは系列の形に強い一方、プロモの横断効果は表モデルの方が取りやすい、というのがこのコンペの要点です。同じ16日検証で数字を並べ、勝った側を多く使います。
+`.env.local` と `kaggle.json`、`data/kaggle/`、`outputs/` は git 管理外です。
+
+## ファイルの読み方
+
+- `src/lib/overview.ts` — コンペ概要と指標の説明。文章はここだけ直せば画面と README が揃う。
+- `python/engine.py` — 実験の流れ。上から読めば手順が分かる。
+- `python/features.py` — 使っている特徴の全部。
+- `python/models_*.py` — モデル1つにファイル1つ。
+- `METHOD.md` — 手法と指標の妥当性のメモ。

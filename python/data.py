@@ -62,9 +62,9 @@ def load_bundle(root: Path, source: str) -> Bundle:
     if source == "kaggle":
         data_dir = root / "data" / "kaggle"
         if not has_kaggle_files(data_dir):
-            raise FileNotFoundError(
-                "data/kaggle に公式CSVがありません。Kaggleからダウンロードして配置してください。"
-            )
+            import kaggle_data
+
+            kaggle_data.download(root)
     else:
         data_dir = root / "data" / "demo"
         if not has_kaggle_files(data_dir):

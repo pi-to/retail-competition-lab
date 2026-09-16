@@ -21,6 +21,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# kaggle credentials
+kaggle.json
+
 # python / experiment outputs
 __pycache__/
 *.pyc
