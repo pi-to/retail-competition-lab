@@ -66,6 +66,13 @@ python3 python/run.py --source demo      # デモデータで実行
 
 `.env.local` と `kaggle.json`、`data/kaggle/`、`outputs/` は git 管理外です。
 
+## テスト
+
+```bash
+cd python && python3 -m pytest -q   # 指標の性質（RMSLE が割合で罰することなど）
+npm run lint
+```
+
 ## ファイルの読み方
 
 - `src/lib/overview.ts` — コンペ概要と指標の説明。文章はここだけ直せば画面と README が揃う。

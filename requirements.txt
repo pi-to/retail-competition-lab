@@ -6,3 +6,4 @@ torch>=2.2
 chronos-forecasting>=2.0
 timesfm>=3.0
 transformers>=4.40
+pytest>=8.0
