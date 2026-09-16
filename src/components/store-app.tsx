@@ -12,6 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import { ClientReport } from "@/components/client-report";
+import { ExperimentHistory, type RunHistory } from "@/components/experiment-history";
 import { SubmitCard } from "@/components/submit-card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -45,12 +46,14 @@ export function StoreApp({
   initialStatus,
   initialError,
   initialRunning,
+  runHistory,
 }: {
   content: CompetitionContent;
   initialResult: Result | null;
   initialStatus: Status | null;
   initialError: RunError | null;
   initialRunning: boolean;
+  runHistory: RunHistory;
 }) {
   const [result, setResult] = useState<Result | null>(initialResult);
   const [status, setStatus] = useState<Status | null>(initialStatus);
@@ -185,6 +188,14 @@ export function StoreApp({
             ) : null}
           </CardContent>
         </Card>
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <SectionTitle
+          title="実験の過程"
+          sub="良かった試行も悪かった試行も、理由仮説と一緒に残す"
+        />
+        <ExperimentHistory competition={content.slug} initial={runHistory} />
       </section>
 
       {result ? (
