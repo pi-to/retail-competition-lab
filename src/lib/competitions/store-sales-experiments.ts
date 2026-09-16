@@ -505,3 +505,62 @@ export function experimentsByScore(
 ): ExperimentInsight[] {
   return [...experiments].sort((a, b) => comparableScore(a) - comparableScore(b));
 }
+
+/** 記事の表。手で書き写すと必ず古くなるので実験データから作る。 */
+export function experimentTableMarkdown(
+  experiments: ExperimentInsight[] = STORE_SALES_EXPERIMENTS
+): string {
+  const header = [
+    "| 試行 | 模擬試験RMSLE | 公開LB | 採否 |",
+    "| --- | ---: | ---: | --- |",
+  ];
+  const rows = experiments.map((item) => {
+    const score = comparableScore(item).toFixed(5);
+    const lb = item.leaderboard ? item.leaderboard.toFixed(5) : "—";
+    const emphasis = item.submitAction === "submit_now" ? `**${score}**` : score;
+    return `| ${item.title} | ${emphasis} | ${lb} | ${item.outcome} |`;
+  });
+  return [...header, ...rows].join("\n");
+}
+
+/** うまくいかなかった試行だけを、理由と学びつきで並べる。 */
+export function rejectedMarkdown(
+  experiments: ExperimentInsight[] = STORE_SALES_EXPERIMENTS
+): string {
+  return experiments
+    .filter((item) => item.outcome === "不採用")
+    .map((item) =>
+      [
+        `### ${item.title}（${comparableScore(item).toFixed(5)}）`,
+        "",
+        `- やったこと: ${item.tried}`,
+        `- 結果: ${item.result}`,
+        `- 考えた理由: ${item.why}`,
+        `- 学び: ${item.learned}`,
+      ].join("\n")
+    )
+    .join("\n\n");
+}
+
+/** いま提出する版の説明。Championが動いても記事がずれない。 */
+export function championMarkdown(
+  experiments: ExperimentInsight[] = STORE_SALES_EXPERIMENTS
+): string {
+  const next = pickSubmitCandidate(experiments);
+  const submitted = experiments.find((item) => item.submitAction === "already_submitted");
+  const lines = [
+    `いま提出する版は「${next.title}」で、混ぜ方を決めていない店で採点すると ${comparableScore(next).toFixed(5)} です。`,
+    "",
+    `- やったこと: ${next.tried}`,
+    `- 結果: ${next.result}`,
+    `- 学び: ${next.learned}`,
+  ];
+  if (next.runId) lines.push(`- Run ID: \`${next.runId}\``);
+  if (submitted?.leaderboard) {
+    lines.push(
+      "",
+      `公開LBが分かっているのは最初の提出だけで、${submitted.leaderboard.toFixed(5)} でした。当時のローカル ${submitted.localRmsle.toFixed(5)} との差は ${Math.abs(submitted.leaderboard - submitted.localRmsle).toFixed(5)} です。`
+    );
+  }
+  return lines.join("\n");
+}
