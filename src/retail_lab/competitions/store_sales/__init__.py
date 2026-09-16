@@ -125,6 +125,38 @@ def prepare(root: Path, source: str) -> Prepared:
                 org="custom",
             ),
             CandidateModel(
+                id="recursive_hurdle_deep",
+                title="再帰 LightGBM（売れるか × いくら・細かい木）",
+                note=(
+                    "売れるか／いくらの2段構えを、葉63・木560本で学ぶ。"
+                    "同じ考え方でも当たる行がずれるので、混ぜる相手になる。"
+                ),
+                predict=partial(
+                    recursive.fit_predict,
+                    intermittent=True,
+                    hurdle=True,
+                    n_estimators=560,
+                    learning_rate=0.03,
+                    num_leaves=63,
+                ),
+                org="custom",
+            ),
+            CandidateModel(
+                id="recursive_hurdle_short",
+                title="再帰 LightGBM（売れるか × いくら・直近180日）",
+                note=(
+                    "2段構えを直近180日だけで学ぶ。"
+                    "売れ方が最近変わった棚を、古い頻度に引っ張られずに追う。"
+                ),
+                predict=partial(
+                    recursive.fit_predict,
+                    intermittent=True,
+                    hurdle=True,
+                    context_days=180,
+                ),
+                org="custom",
+            ),
+            CandidateModel(
                 id="direct_horizon_lgbm",
                 title="予測距離別 LightGBM",
                 note=(
