@@ -118,6 +118,7 @@ export function ExperimentHistory({
             <CardTitle className="text-base">ここまでの縮み方</CardTitle>
             <CardDescription>
               左から右へ、試すたびに点数が下がってきた。下ほど良い。
+              橙の破線は、実際にKaggleへ出して確かめた 0.39515。
             </CardDescription>
           </CardHeader>
           <CardContent className="h-56">
@@ -136,12 +137,7 @@ export function ExperimentHistory({
                     trail.find((item) => item.step === step)?.name ?? `${step}`
                   }
                 />
-                <ReferenceLine
-                  y={0.39515}
-                  stroke="#f97316"
-                  strokeDasharray="4 4"
-                  label={{ value: "本番で確認済み 0.39515", fontSize: 10, position: "insideTopRight" }}
-                />
+                <ReferenceLine y={0.39515} stroke="#f97316" strokeDasharray="4 4" />
                 <Line
                   type="monotone"
                   dataKey="score"
@@ -189,10 +185,10 @@ export function ExperimentHistory({
                         )}
                       </TableCell>
                       <TableCell className="text-right font-mono font-medium">
-                        {item.localRmsle.toFixed(3)}
+                        {item.localRmsle.toFixed(4)}
                         {item.leaderboard != null ? (
                           <span className="block text-xs font-normal text-muted-foreground">
-                            本番 {item.leaderboard.toFixed(3)}
+                            本番 {item.leaderboard.toFixed(4)}
                           </span>
                         ) : null}
                       </TableCell>
@@ -266,10 +262,10 @@ export function ExperimentHistory({
                             )}
                           </TableCell>
                           <TableCell className="text-right font-mono">
-                            {run.local_rmsle.toFixed(3)}
+                            {run.local_rmsle.toFixed(4)}
                             {run.leaderboard !== null ? (
                               <span className="block text-xs text-muted-foreground">
-                                本番 {run.leaderboard.toFixed(3)}
+                                本番 {run.leaderboard.toFixed(4)}
                               </span>
                             ) : null}
                           </TableCell>

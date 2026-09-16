@@ -193,10 +193,10 @@ export function StoreApp({
       </section>
 
       <section className="flex flex-col gap-3">
-        <SectionTitle
-          title="実験の過程"
-          sub="良かった試行も悪かった試行も、理由仮説と一緒に残す"
-        />
+            <SectionTitle
+              title="実験の過程"
+              sub="うまくいった試行も、いかなかった試行も、理由と一緒に残しています"
+            />
         <ExperimentHistory competition={content.slug} initial={runHistory} />
       </section>
 
