@@ -82,6 +82,8 @@ const SHORT: Record<string, string> = {
   "hurdle-diverse-v1": "2段構えを増やす",
   "direct-intermittent-v1": "積み上げない2段構え",
   "direct-family-trend-v1": "全店の売り場の勢い",
+  "direct-peer-context-v1": "地域の同業店勢い",
+  "family-calibrate-v1": "売り場ごとの倍率補正",
   "foundation-blend-v1": "最初の提出",
 };
 

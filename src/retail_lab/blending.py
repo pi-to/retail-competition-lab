@@ -170,12 +170,15 @@ def with_pooled_candidates(
     val_preds: dict[str, pd.DataFrame],
     test_preds: dict[str, pd.DataFrame],
 ) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
-    """過大予測を抑える行ごと最小モデルを候補へ足す。"""
+    """過大予測を抑える行ごとのまとめを候補へ足す。"""
     pool_names = [
         name
         for name in (
             "direct_horizon_lgbm",
+            "direct_hurdle",
+            "direct_family_trend_hurdle",
             "recursive_lgbm",
+            "recursive_hurdle_deep",
             "recursive_lgbm_no_eq",
             "timesfm",
         )
@@ -185,8 +188,12 @@ def with_pooled_candidates(
         return val_preds, test_preds
     val_out = dict(val_preds)
     test_out = dict(test_preds)
-    val_out["robust_min"] = pool_predictions(val_preds, pool_names, how="min")
-    test_out["robust_min"] = pool_predictions(test_preds, pool_names, how="min")
+    for stale in ("robust_min", "robust_median", "robust_gmean"):
+        val_out.pop(stale, None)
+        test_out.pop(stale, None)
+    for how, key in (("min", "robust_min"), ("median", "robust_median"), ("gmean", "robust_gmean")):
+        val_out[key] = pool_predictions(val_preds, pool_names, how=how)
+        test_out[key] = pool_predictions(test_preds, pool_names, how=how)
     return val_out, test_out
 
 
