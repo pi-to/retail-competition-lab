@@ -30,32 +30,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import type { CompetitionContent } from "@/lib/competitions";
 import type { KaggleStatus, Result, Status } from "@/lib/types";
 
-const APPROACH = [
-  {
-    title: "log で学ぶ",
-    body: "指標が log なので、モデルも log(1+売上) を当てて最後に戻す。指標と学習を揃える。",
-  },
-  {
-    title: "16日以上前の実績しか使わない",
-    body: "16日先まで一度に出すので、3日前の売上は本番では手に入らない。使えるふりをすると検証だけ当たる。",
-  },
-  {
-    title: "4つを同じ窓で比べる",
-    body: "季節ナイーブ（下限）、LightGBM（表）、Chronos-2（基盤モデル）、TimesFM（基盤モデル）を、学習末尾16日で採点する。",
-  },
-  {
-    title: "勝った方を多く混ぜる",
-    body: "検証 RMSLE の逆数を重みにする。悪いモデルは自動的に薄まるので、人が勘で重みを決めない。",
-  },
-];
-
 export function StoreApp({
+  content,
   initialResult,
   initialStatus,
   kaggleStatus,
 }: {
+  content: CompetitionContent;
   initialResult: Result | null;
   initialStatus: Status | null;
   kaggleStatus: KaggleStatus;
@@ -134,7 +118,7 @@ export function StoreApp({
       <section className="flex flex-col gap-3">
         <SectionTitle title="解き方" sub="覚えることは4つだけ" />
         <div className="grid gap-3 sm:grid-cols-2">
-          {APPROACH.map((step, i) => (
+          {content.approach.map((step, i) => (
             <Card key={step.title} size="sm">
               <CardHeader>
                 <CardTitle className="text-sm">
@@ -154,8 +138,8 @@ export function StoreApp({
         <Card>
           <CardHeader>
             <CardDescription>
-              デモは公式と同じ列名の縮小データ（4店舗 × 6ファミリー）です。公式CSVを{" "}
-              <code>data/kaggle/</code> に置くと、そのまま提出できる submission.csv が出ます。
+              {content.demoNote}公式データを取ると、そのまま提出できる submission.csv が{" "}
+              <code>outputs/{content.slug}/</code> に出ます。
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
@@ -304,10 +288,11 @@ export function StoreApp({
                 <CardDescription>公開されている上位解法で効くと分かっている順。</CardDescription>
               </CardHeader>
               <CardContent className="space-y-2 text-sm text-muted-foreground">
-                <p>1. 商品ファミリーごとに別のモデルを建てる。</p>
-                <p>2. 予測を1日ずつ前に進めて、7日前などの近いラグを使えるようにする。</p>
-                <p>3. 直近数日が0の系列は0と言い切る（このアプリは21日で実装済み）。</p>
-                <p>4. 2016年4月の地震の週に印をつける、または学習から外す。</p>
+                {content.nextSteps.map((step, i) => (
+                  <p key={step}>
+                    {i + 1}. {step}
+                  </p>
+                ))}
               </CardContent>
             </Card>
           </section>
@@ -316,7 +301,7 @@ export function StoreApp({
         <Alert>
           <AlertTitle>まだ結果がありません</AlertTitle>
           <AlertDescription>
-            「予測を実行」でデモ24系列を採点します。初回は Chronos-2 と TimesFM の重みを取得するため数分かかることがあります。
+            「予測を実行」で採点します。初回は Chronos-2 と TimesFM の重みを取得するため数分かかることがあります。
           </AlertDescription>
         </Alert>
       )}

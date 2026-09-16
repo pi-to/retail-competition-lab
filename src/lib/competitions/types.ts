@@ -1,0 +1,27 @@
+/** 画面が1コンペを説明するために必要な文章と数字。 */
+export type CompetitionContent = {
+  slug: string;
+  title: string;
+  headline: string;
+  oneLine: string;
+  badges: string[];
+  pillars: { title: string; lead: string; body: string }[];
+  scale: { label: string; value: string; note: string }[];
+  metric: {
+    name: string;
+    formulaPlain: string;
+    reasons: { title: string; body: string }[];
+    example: {
+      caption: string;
+      rows: { case: string; actual: string; pred: string; rawError: string; metricError: string }[];
+      note: string;
+    };
+    limits: string;
+  };
+  difficulty: { title: string; body: string }[];
+  scoreGuide: { score: string; label: string; factor: string }[];
+  scoreNote: string;
+  approach: { title: string; body: string }[];
+  nextSteps: string[];
+  demoNote: string;
+};

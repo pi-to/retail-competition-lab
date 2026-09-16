@@ -1,12 +1,14 @@
-# Store Sales Lab
+# Retail Lab
 
-[Kaggle Store Sales — Time Series Forecasting](https://www.kaggle.com/competitions/store-sales-time-series-forecasting/data) を、非エンジニアでも結果が読める形で解く Web アプリです。
+小売の需要予測コンペを、手法が後から読める形で解くリポジトリです。いまは Kaggle の
+[Store Sales — Time Series Forecasting](https://www.kaggle.com/competitions/store-sales-time-series-forecasting/data)
+を扱っています。コンペを足すときは [docs/adding-a-competition.md](docs/adding-a-competition.md) を見てください。
 
-## 何の問題か
+## 何の問題か（Store Sales）
 
 エクアドルの食品スーパー Favorita の発注担当が、店舗×商品ファミリーごとに16日先までの売上を毎日決めている。54店舗 × 33ファミリー = 1,782 系列 × 16日 = 28,512 個の予測が、そのまま発注量になる。少なく見れば欠品、多く見れば廃棄。両方を同時に減らすのが狙いです。
 
-採点は RMSLE。なぜその指標が妥当かは [METHOD.md](METHOD.md) に具体例つきで書いてあります。
+採点は RMSLE。なぜその指標が妥当かは [docs/store-sales/method.md](docs/store-sales/method.md) に具体例つきで書いてあります。
 
 ## 画面でできること
 
@@ -21,62 +23,83 @@
 | モデル | 役割 |
 | --- | --- |
 | 季節ナイーブ | 同じ曜日の直近実績。下限 |
-| LightGBM | プロモ・祝日・原油・給料日・店属性を店横断で学習 |
+| LightGBM | プロモ・祝日・原油・給料日・店属性を系列横断で学習 |
 | Amazon Chronos-2 | 系列 + 未来共変量のゼロショット |
 | Google TimesFM 2.5 | AWS に依らない単変量ゼロショット |
 | 混合 | 検証 RMSLE の逆数重み + ゼロ系列の後処理 |
 
 ## 起動
 
+Python は uv、画面は npm です。
+
 ```bash
-python3 -m pip install -r requirements.txt
+uv sync --frozen
 npm install
 npm run dev
 ```
 
 http://127.0.0.1:43123 が開きます。「予測を実行」でデモデータ（4店舗 × 6ファミリー）が採点されます。初回は Hugging Face から Chronos-2 と TimesFM の重みを取得します。
 
+## コマンド
+
+```bash
+uv run retail-lab list                       # 登録済みのコンペ
+uv run retail-lab status                     # 公式データの取得状況
+uv run retail-lab fetch                      # Kaggle から公式データを取得
+uv run retail-lab run --source demo          # デモデータで実験
+uv run retail-lab run --source kaggle        # 公式データで実験（未取得なら自動取得）
+uv run retail-lab --competition store-sales run --source demo
+```
+
 ## 公式データの取得
 
-画面の「Kaggle から取得」を押すと API でダウンロードします。事前に2つ必要です。
+画面の「Kaggle から取得」か `uv run retail-lab fetch` で API から取ります。事前に2つ必要です。
 
 1. コンペページで Join Competition（規約同意）。
 2. Kaggle の [Settings](https://www.kaggle.com/settings) で API トークンを作る。
 
-認証情報は次のどちらかで渡します。
+認証情報は次のいずれかで渡します。`.env.local` は Next.js が読み込み、Python にも渡ります。
 
 ```bash
-# 方法1: .env.local に書く（Next.js が読み込み、Python にも渡る）
+# 新しい API トークン（KGAT_ で始まる）
+KAGGLE_API_TOKEN=KGAT_xxxxxxxx
+
+# 旧来の方式
 KAGGLE_USERNAME=your_name
 KAGGLE_KEY=your_key
 ```
 
-```bash
-# 方法2: ダウンロードした kaggle.json をリポジトリ直下に置く
-```
+`kaggle.json` をリポジトリ直下に置く方法でも動きます。
 
-CLI だけで使う場合:
+## 確認コマンド
 
 ```bash
-python3 python/kaggle_data.py --status   # 取得状況の確認
-python3 python/kaggle_data.py            # ダウンロード
-python3 python/run.py --source kaggle    # 公式データで実行（未取得なら自動取得）
-python3 python/run.py --source demo      # デモデータで実行
-```
-
-`.env.local` と `kaggle.json`、`data/kaggle/`、`outputs/` は git 管理外です。
-
-## テスト
-
-```bash
-cd python && python3 -m pytest -q   # 指標の性質（RMSLE が割合で罰することなど）
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy src
 npm run lint
 ```
 
-## ファイルの読み方
+## ファイル構成
 
-- `src/lib/overview.ts` — コンペ概要と指標の説明。文章はここだけ直せば画面と README が揃う。
-- `python/engine.py` — 実験の流れ。上から読めば手順が分かる。
-- `python/features.py` — 使っている特徴の全部。
-- `python/models_*.py` — モデル1つにファイル1つ。
-- `METHOD.md` — 手法と指標の妥当性のメモ。
+```
+src/retail_lab/            小売コンペ共通の土台
+  metrics.py               RMSLE と、現場に説明する指標
+  validation.py            検証窓の切り方
+  blending.py              混合とゼロ系列の後処理
+  experiment.py            実験ループ（全コンペ共通）
+  kaggle.py                Kaggle API
+  registry.py              扱っているコンペの一覧
+  cli.py                   uv run retail-lab
+  models/                  naive / gbdt / chronos / timesfm
+  competitions/store_sales/  このコンペ固有のデータと特徴
+src/app, src/components    画面（Next.js）
+src/lib/competitions/      画面に出す説明文。コンペごとに1ファイル
+data/<slug>/{demo,kaggle}  データ
+outputs/<slug>/            結果と submission.csv
+docs/                      手法メモとコンペ追加手順
+tests/                     指標・分割・混合のテスト
+```
+
+`.env.local`、`kaggle.json`、`data/*/kaggle/`、`outputs/`、`.venv/` は git 管理外です。

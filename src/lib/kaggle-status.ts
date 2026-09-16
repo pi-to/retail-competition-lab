@@ -1,16 +1,22 @@
 import { access, readFile } from "node:fs/promises";
 import path from "node:path";
+import { DEFAULT_COMPETITION } from "@/lib/competitions";
 import type { KaggleStatus } from "@/lib/types";
 
-const COMPETITION = "store-sales-time-series-forecasting";
-const REQUIRED = [
-  "train.csv",
-  "test.csv",
-  "stores.csv",
-  "oil.csv",
-  "holidays_events.csv",
-  "transactions.csv",
-];
+/** Python 側 `retail_lab/competitions/<slug>/spec.py` と揃える。 */
+const KAGGLE_SLUG: Record<string, string> = {
+  "store-sales": "store-sales-time-series-forecasting",
+};
+const REQUIRED: Record<string, string[]> = {
+  "store-sales": [
+    "train.csv",
+    "test.csv",
+    "stores.csv",
+    "oil.csv",
+    "holidays_events.csv",
+    "transactions.csv",
+  ],
+};
 
 async function exists(file: string) {
   try {
@@ -42,19 +48,21 @@ async function hasCredentials(root: string) {
 }
 
 /** 画面の初期表示用。Python を起動せずにファイルと環境変数だけ見る。 */
-export async function readKaggleStatus(): Promise<KaggleStatus> {
+export async function readKaggleStatus(slug: string = DEFAULT_COMPETITION): Promise<KaggleStatus> {
   const root = process.cwd();
-  const dir = path.join(root, "data", "kaggle");
+  const dir = path.join(root, "data", slug, "kaggle");
+  const required = REQUIRED[slug] ?? [];
+  const kaggleSlug = KAGGLE_SLUG[slug] ?? slug;
   const present = await Promise.all(
-    REQUIRED.map(async (name) => ({ name, ok: await exists(path.join(dir, name)) }))
+    required.map(async (name) => ({ name, ok: await exists(path.join(dir, name)) }))
   );
   const missing = present.filter((p) => !p.ok).map((p) => p.name);
   return {
-    competition: COMPETITION,
-    ready: missing.length === 0,
+    competition: kaggleSlug,
+    ready: required.length > 0 && missing.length === 0,
     missing,
     has_credentials: await hasCredentials(root),
-    rules_url: `https://www.kaggle.com/competitions/${COMPETITION}/rules`,
+    rules_url: `https://www.kaggle.com/competitions/${kaggleSlug}/rules`,
     token_url: "https://www.kaggle.com/settings",
   };
 }

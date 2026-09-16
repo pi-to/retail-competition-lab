@@ -1,64 +1,43 @@
-import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { outputDir, runCli } from "@/lib/cli";
+import { DEFAULT_COMPETITION } from "@/lib/competitions";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
+export const maxDuration = 900;
 
+/** コンペごとに1本だけ走らせる。連打しても同じ実行を待つ。 */
 const running = new Map<string, Promise<void>>();
 
-function rootDir() {
-  return process.cwd();
-}
-
-async function runPython(source: "demo" | "kaggle") {
-  const outDir = path.join(rootDir(), "outputs");
-  await mkdir(outDir, { recursive: true });
+async function runExperiment(slug: string, source: "demo" | "kaggle") {
+  const out = outputDir(slug);
+  await mkdir(out, { recursive: true });
   await writeFile(
-    path.join(outDir, "status.json"),
+    path.join(out, "status.json"),
     JSON.stringify({ step: "start", message: "起動しています", pct: 1 }),
     "utf8"
   );
-
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(
-      "python3",
-      [
-        path.join(rootDir(), "python/run.py"),
-        "--source",
-        source,
-        "--root",
-        rootDir(),
-        "--out",
-        outDir,
-      ],
-      { cwd: rootDir(), env: { ...process.env, PYTHONUNBUFFERED: "1" } }
-    );
-    let stderr = "";
-    child.stdout.on("data", (buf) => process.stdout.write(buf));
-    child.stderr.on("data", (buf) => {
-      stderr += buf.toString();
-      process.stderr.write(buf);
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(stderr || `python exited ${code}`));
-    });
-  });
+  const result = await runCli(["--competition", slug, "run", "--source", source]);
+  if (result.code !== 0) {
+    throw new Error(result.stderr.trim() || `実行が失敗しました（終了コード ${result.code}）`);
+  }
 }
 
 export async function POST(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as { source?: string };
+  const body = (await req.json().catch(() => ({}))) as { source?: string; competition?: string };
   const source = body.source === "kaggle" ? "kaggle" : "demo";
-  const key = source;
+  const slug = body.competition ?? DEFAULT_COMPETITION;
+  const key = `${slug}:${source}`;
+
   if (!running.has(key)) {
-    const job = runPython(source).finally(() => running.delete(key));
-    running.set(key, job);
+    running.set(
+      key,
+      runExperiment(slug, source).finally(() => running.delete(key))
+    );
   }
   try {
     await running.get(key);
-    return Response.json({ ok: true, source });
+    return Response.json({ ok: true, competition: slug, source });
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown error";
     return Response.json({ ok: false, error: message }, { status: 500 });
