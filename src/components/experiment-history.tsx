@@ -88,6 +88,15 @@ const SHORT: Record<string, string> = {
   "foundation-blend-v1": "最初の提出",
 };
 
+function isMilestone(item: ExperimentInsight): boolean {
+  return (
+    item.submitAction === "submit_now" ||
+    item.submitAction === "already_submitted" ||
+    item.outcome === "改善" ||
+    item.leaderboard != null
+  );
+}
+
 export function ExperimentHistory({
   competition,
   initial,
@@ -99,26 +108,26 @@ export function ExperimentHistory({
   const ranked = experimentsByScore();
   const failed = STORE_SALES_EXPERIMENTS.filter((item) => item.outcome === "不採用");
   const [selected, setSelected] = useState<string>(rec.experiment.id);
-  const [showFailed, setShowFailed] = useState(true);
+  const [showAll, setShowAll] = useState(false);
   const [history, setHistory] = useState(initial);
   const [pending, setPending] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const insight = ranked.find((item) => item.id === selected) ?? rec.experiment;
-  const visible = showFailed ? ranked : ranked.filter((item) => item.outcome !== "不採用");
 
-  /** 時系列の縮み方。点数が良い順ではなく、実験の流れで並べる。 */
-  const story = [...STORE_SALES_EXPERIMENTS]
-    .filter((item) => item.outcome !== "不採用" || item.leaderboard != null)
-    .map((item, index) => ({
-      step: index + 1,
-      id: item.id,
-      name: SHORT[item.id] ?? item.title,
-      score: comparableScore(item),
-      lb: item.leaderboard ?? null,
-      action: item.submitAction,
-    }));
+  const milestones = ranked.filter(isMilestone);
+  const visible = showAll ? ranked : milestones;
 
-  const barRows = visible.map((item) => ({
+  /** 時系列の縮み方。改善した版だけを左→右で並べる。 */
+  const story = STORE_SALES_EXPERIMENTS.filter(
+    (item) => item.outcome === "改善" || item.submitAction === "already_submitted"
+  ).map((item, index) => ({
+    step: index + 1,
+    id: item.id,
+    name: SHORT[item.id] ?? item.title,
+    score: comparableScore(item),
+  }));
+
+  const barRows = visible.slice(0, 8).map((item) => ({
     id: item.id,
     name: SHORT[item.id] ?? item.title,
     score: comparableScore(item),
@@ -165,7 +174,10 @@ export function ExperimentHistory({
       <TabsContent value="insights" className="mt-3 flex flex-col gap-3">
         <Alert>
           <AlertTitle>{rec.headline}</AlertTitle>
-          <AlertDescription>{rec.experiment.plain}</AlertDescription>
+          <AlertDescription>
+            <span className="font-medium text-foreground">つまり：</span>
+            {rec.experiment.plain}
+          </AlertDescription>
         </Alert>
 
         <div className="grid gap-3 lg:grid-cols-2">
@@ -173,10 +185,10 @@ export function ExperimentHistory({
             <CardHeader className="pb-2">
               <CardTitle className="text-base">ここまでの縮み方</CardTitle>
               <CardDescription>
-                左→右で試行が進む。下ほど良い。橙の破線は本番で確かめた 0.395。
+                左→右で良くなった版だけ。下ほど良い。破線＝本番で確かめた 0.395。
               </CardDescription>
             </CardHeader>
-            <CardContent className="h-52">
+            <CardContent className="h-48">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={story} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -211,10 +223,10 @@ export function ExperimentHistory({
               <CardTitle className="text-base">点数の並び</CardTitle>
               <CardDescription>短いほど良い。青＝次に出す / 橙＝本番済み。</CardDescription>
             </CardHeader>
-            <CardContent className="h-52">
+            <CardContent className="h-48">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
-                  data={barRows.slice(0, 10)}
+                  data={barRows}
                   layout="vertical"
                   margin={{ left: 4, right: 36, top: 0, bottom: 0 }}
                 >
@@ -230,7 +242,7 @@ export function ExperimentHistory({
                       if (id) setSelected(id);
                     }}
                   >
-                    {barRows.slice(0, 10).map((row) => (
+                    {barRows.map((row) => (
                       <Cell
                         key={row.id}
                         fill={
@@ -298,11 +310,8 @@ export function ExperimentHistory({
                           </span>
                         ) : null}
                       </TableCell>
-                      <TableCell className="max-w-xl whitespace-normal py-2">
-                        <span className="text-sm font-medium">
-                          {SHORT[item.id] ?? item.title}
-                        </span>
-                        <span className="block text-xs text-muted-foreground">{item.plain}</span>
+                      <TableCell className="max-w-xl whitespace-normal py-2 text-sm font-medium">
+                        {SHORT[item.id] ?? item.title}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -313,11 +322,11 @@ export function ExperimentHistory({
               variant="outline"
               size="sm"
               className="self-start"
-              onClick={() => setShowFailed((value) => !value)}
+              onClick={() => setShowAll((value) => !value)}
             >
-              {showFailed
-                ? "うまくいかなかった試行を隠す"
-                : `うまくいかなかった試行も見る（${failed.length}件）`}
+              {showAll
+                ? "うまくいった版だけ見る"
+                : `全部見る（不採用 ${failed.length} 件を含む）`}
             </Button>
           </CardContent>
         </Card>

@@ -22,8 +22,8 @@ import type { CompetitionContent } from "@/lib/competitions";
 export function Overview({ content }: { content: CompetitionContent }) {
   const { metric, plain } = content;
   return (
-    <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-3">
+    <div className="flex flex-col gap-5">
+      <header className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">
           {content.badges.map((badge, i) => (
             <Badge key={badge} variant={i === 0 ? "default" : i === 1 ? "secondary" : "outline"}>
@@ -77,7 +77,7 @@ export function Overview({ content }: { content: CompetitionContent }) {
             <CardTitle className="text-base">いまの点数</CardTitle>
             <CardDescription>{plain.scoreLead}</CardDescription>
           </CardHeader>
-          <CardContent className="h-48">
+          <CardContent className="h-44">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
                 data={plain.scoreBars}
@@ -103,70 +103,48 @@ export function Overview({ content }: { content: CompetitionContent }) {
         </Card>
       </section>
 
-      <section>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">いま一番困っている売り場</CardTitle>
-            <CardDescription>
-              英語の売り場名はそのまま。右の言い方でイメージしてください。長いほど外しやすい。
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={plain.struggles}
-                layout="vertical"
-                margin={{ left: 4, right: 40, top: 4, bottom: 4 }}
-              >
-                <XAxis type="number" domain={[0, 0.7]} hide />
-                <YAxis
-                  type="category"
-                  dataKey="familiar"
-                  width={108}
-                  tick={{ fontSize: 11 }}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">いま一番困っている売り場</CardTitle>
+          <CardDescription>
+            棒が長いほど外しやすい。英語名はそのまま、左は身近な言い方。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="h-52">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart
+              data={plain.struggles}
+              layout="vertical"
+              margin={{ left: 4, right: 48, top: 4, bottom: 4 }}
+            >
+              <XAxis type="number" domain={[0, 0.7]} hide />
+              <YAxis type="category" dataKey="familiar" width={108} tick={{ fontSize: 11 }} />
+              <Bar dataKey="score" fill="#ea580c" radius={[0, 4, 4, 0]} barSize={18}>
+                <LabelList
+                  dataKey="score"
+                  position="right"
+                  className="fill-foreground font-mono"
+                  fontSize={11}
                 />
-                <Bar dataKey="score" fill="#ea580c" radius={[0, 4, 4, 0]} barSize={16}>
-                  <LabelList
-                    dataKey="score"
-                    position="right"
-                    className="fill-foreground font-mono"
-                    fontSize={11}
-                  />
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-            <ul className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
-              {plain.struggles.map((item) => (
-                <li key={item.family}>
-                  <span className="font-medium text-foreground">{item.familiar}</span>
-                  <span className="mx-1 font-mono text-[10px]">({item.family})</span>
-                  — {item.plain}
-                </li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
-      </section>
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
 
-      <section>
-        <Card size="sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">出てくる言葉</CardTitle>
-            <CardDescription>言い換えなくていい。意味だけ添えます。</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-wrap gap-2">
-            {plain.jargon.map((item) => (
-              <span
-                key={item.term}
-                className="inline-flex max-w-full flex-col rounded-md border bg-background px-2.5 py-1.5 text-xs"
-              >
-                <span className="font-medium">{item.term}</span>
-                <span className="text-muted-foreground">{item.plain}</span>
-              </span>
-            ))}
-          </CardContent>
-        </Card>
-      </section>
+      <Details summary="出てくる言葉（つまり…）">
+        <div className="flex flex-wrap gap-2">
+          {plain.jargon.map((item) => (
+            <span
+              key={item.term}
+              className="inline-flex max-w-full flex-col rounded-md border bg-background px-2.5 py-1.5 text-xs"
+            >
+              <span className="font-medium">{item.term}</span>
+              <span className="text-muted-foreground">{item.plain}</span>
+            </span>
+          ))}
+        </div>
+      </Details>
 
       <Details summary="点数の仕組み（くわしく）">
         <p className="text-sm text-muted-foreground">{metric.formulaPlain}</p>

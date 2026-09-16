@@ -1314,6 +1314,64 @@ def test_recursive_intermittent_does_not_read_future_targets():
     assert {str(item["feature"]) for item in ranked} >= {"recursive_days_since_sale"}
 
 
+def test_recursive_family_trend_does_not_read_future_targets():
+    from retail_lab.competitions.store_sales.recursive import fit_predict
+
+    dates = pd.date_range("2017-01-01", periods=140)
+    rows = []
+    row_id = 0
+    for store in (1, 2):
+        for i, date in enumerate(dates):
+            rows.append(
+                {
+                    "row_id": row_id,
+                    "series_id": f"{store}::A",
+                    "date": date,
+                    "target": float((4 + store) if i % 4 == 0 else 0),
+                    "family": "A",
+                    "store_nbr": store,
+                    "type": "A",
+                    "cluster": store,
+                    "onpromotion": 0.0,
+                    "promo_log": 0.0,
+                    "oil": 50.0,
+                    "oil_lag7": 50.0,
+                    "dow": date.weekday(),
+                    "day": date.day,
+                    "month": date.month,
+                    "week": int(date.isocalendar().week),
+                    "is_weekend": int(date.weekday() >= 5),
+                    "is_payday": 0,
+                    "is_national_holiday": 0,
+                    "is_local_holiday": 0,
+                    "is_earthquake": 0,
+                    "transactions_lag16": 100.0,
+                    **EXOG_DEFAULTS,
+                }
+            )
+            row_id += 1
+    panel = pd.DataFrame(rows)
+    train = panel[panel["date"] < dates[-8]]
+    future = panel[panel["date"] >= dates[-8]]
+    changed = future.copy()
+    changed["target"] = 999999.0
+    kwargs = {
+        "n_estimators": 8,
+        "context_days": 140,
+        "intermittent": True,
+        "family_trend": True,
+    }
+
+    first, ranked = fit_predict(train, future, **kwargs)
+    second, _ = fit_predict(train, changed, **kwargs)
+
+    assert first.sort_values("row_id")["pred"].tolist() == pytest.approx(
+        second.sort_values("row_id")["pred"].tolist()
+    )
+    assert (first["pred"] >= 0).all()
+    assert {str(item["feature"]) for item in ranked} >= {"family_level_ratio_7_56"}
+
+
 def test_panel_adds_regional_holiday_eve_and_known_promo_leads(tmp_path: Path):
     """地域祝日・前夜・プロモの先行は、提出CSVに載っている情報だけで作る。"""
     from retail_lab.competitions.store_sales.data import Bundle, complete_daily_grid

@@ -14,6 +14,12 @@ import pandas as pd
 from lightgbm import LGBMClassifier, LGBMRegressor
 
 from retail_lab import DATE, ROW_ID, SERIES_ID, TARGET
+from retail_lab.competitions.store_sales.context import (
+    FAMILY_TREND_FEATURES,
+    attach_by_origin,
+    attach_family_trend_as_of_previous_day,
+    family_states,
+)
 
 LAGS = (1, 7, 14, 16, 21, 28, 35, 42, 49, 56, 63)
 ROLLS = (7, 14, 28)
@@ -65,6 +71,7 @@ INTERMITTENT_FEATURES = [
     "recursive_dow_mean_4",
 ]
 INTERMITTENT_ALL = [*FEATURES, *INTERMITTENT_FEATURES]
+FAMILY_TREND_ALL = [*INTERMITTENT_ALL, *FAMILY_TREND_FEATURES]
 
 
 def _days_since_sale(values: np.ndarray) -> np.ndarray:
@@ -174,6 +181,7 @@ def fit_predict(
     learning_rate: float = 0.045,
     num_leaves: int = 31,
     hurdle: bool = False,
+    family_trend: bool = False,
 ) -> tuple[pd.DataFrame, list[dict[str, float | str]]]:
     """ファミリーごとに学習し、未来を日ごとに再帰予測する。
 
@@ -181,18 +189,35 @@ def fit_predict(
     `objective="tweedie"` はゼロが多い系統向け。予測は非負のまま出す。
     `intermittent=True` は売れない日の続き方と水準の動きを特徴に足す。
     `hurdle=True` は「売れるか」と「売れたらいくらか」を別に学び、掛けて戻す。
+    `family_trend=True` は全店の売り場平均の勢いを足す。
     """
     if objective not in {"regression", "tweedie"}:
         raise ValueError(f"未対応の objective です: {objective}")
     if hurdle and objective != "regression":
         raise ValueError("hurdle は log1p 回帰のときだけ使えます")
-    columns = INTERMITTENT_ALL if intermittent else FEATURES
+    if family_trend and not intermittent:
+        raise ValueError("family_trend は intermittent=True のときだけ使えます")
+    columns = FAMILY_TREND_ALL if family_trend else INTERMITTENT_ALL if intermittent else FEATURES
     cutoff = train[DATE].max() - pd.Timedelta(days=context_days)
     recent = train[train[DATE] > cutoff]
     if drop_earthquake and "is_earthquake" in recent.columns:
         recent = recent[recent["is_earthquake"] == 0]
     featured = _training_features(recent, intermittent=intermittent)
-    future_clean = future.drop(columns=[TARGET], errors="ignore")
+    fam_states = family_states(recent) if family_trend else None
+    if family_trend and fam_states is not None:
+        featured = attach_family_trend_as_of_previous_day(featured, fam_states)
+    future_clean = future.drop(columns=[TARGET], errors="ignore").copy()
+    origin = train[DATE].max()
+    if family_trend and fam_states is not None:
+        future_horizons = (pd.to_datetime(future_clean[DATE]) - origin).dt.days.astype(int)
+        future_clean = attach_by_origin(
+            future_clean,
+            fam_states,
+            ["family"],
+            FAMILY_TREND_FEATURES,
+            future_horizons,
+            fixed_origin=origin,
+        )
 
     predictions: list[pd.DataFrame] = []
     importance: defaultdict[str, float] = defaultdict(float)
@@ -265,7 +290,11 @@ def fit_predict(
                 )
                 for _, row in day.iterrows()
             ]
-            day_x = pd.DataFrame(rows, index=day.index)[columns]
+            day_x = pd.DataFrame(rows, index=day.index)
+            if family_trend:
+                for name in FAMILY_TREND_FEATURES:
+                    day_x[name] = day[name].to_numpy()
+            day_x = day_x[columns]
             for column in CATEGORICALS:
                 day_x[column] = pd.Categorical(day_x[column], categories=categories[column])
             raw = model.predict(day_x)

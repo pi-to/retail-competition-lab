@@ -179,6 +179,8 @@ def with_pooled_candidates(
             "direct_family_trend_hurdle",
             "recursive_lgbm",
             "recursive_hurdle_deep",
+            "recursive_family_trend",
+            "recursive_family_trend_hurdle",
             "recursive_lgbm_no_eq",
             "timesfm",
         )

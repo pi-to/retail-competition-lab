@@ -157,6 +157,35 @@ def prepare(root: Path, source: str) -> Prepared:
                 org="custom",
             ),
             CandidateModel(
+                id="recursive_family_trend",
+                title="再帰 LightGBM（売り場全体の勢い）",
+                note=(
+                    "いちばん重い再帰モデルへ、全店の売り場平均の勢いを載せる。"
+                    "GROCERY II のような全体の水準変化を、日々の積み上げでも使う。"
+                ),
+                predict=partial(
+                    recursive.fit_predict,
+                    intermittent=True,
+                    family_trend=True,
+                ),
+                org="custom",
+            ),
+            CandidateModel(
+                id="recursive_family_trend_hurdle",
+                title="再帰 LightGBM（売り場の勢い × 2段構え）",
+                note=(
+                    "売り場全体の勢いを見ながら、売れる確率と量を分けて学ぶ。"
+                    "下着売り場や小さめ食料品で、全体の流れと日々の当たり外れを分ける。"
+                ),
+                predict=partial(
+                    recursive.fit_predict,
+                    intermittent=True,
+                    hurdle=True,
+                    family_trend=True,
+                ),
+                org="custom",
+            ),
+            CandidateModel(
                 id="direct_horizon_lgbm",
                 title="予測距離別 LightGBM",
                 note=(
