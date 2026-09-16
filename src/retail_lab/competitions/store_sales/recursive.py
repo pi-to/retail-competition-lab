@@ -82,6 +82,7 @@ def fit_predict(
     *,
     n_estimators: int = 320,
     context_days: int = 730,
+    drop_earthquake: bool = False,
 ) -> tuple[pd.DataFrame, list[dict[str, float | str]]]:
     """ファミリーごとに学習し、未来を日ごとに再帰予測する。
 
@@ -89,6 +90,8 @@ def fit_predict(
     """
     cutoff = train[DATE].max() - pd.Timedelta(days=context_days)
     recent = train[train[DATE] > cutoff]
+    if drop_earthquake and "is_earthquake" in recent.columns:
+        recent = recent[recent["is_earthquake"] == 0]
     featured = _training_features(recent)
     future_clean = future.drop(columns=[TARGET], errors="ignore")
 

@@ -501,6 +501,47 @@ def test_direct_horizon_forecast_never_reads_future_targets():
     assert (first["pred"] >= 0).all()
 
 
+def test_recursive_drop_earthquake_does_not_read_future_targets():
+    from retail_lab.competitions.store_sales.recursive import fit_predict
+
+    panel = _panel(days=90, horizon=4)
+    for column, value in {
+        "family": "A",
+        "store_nbr": 1,
+        "type": "A",
+        "cluster": 1,
+        "onpromotion": 0.0,
+        "promo_log": 0.0,
+        "oil": 50.0,
+        "oil_lag7": 50.0,
+        "dow": 1,
+        "day": 1,
+        "month": 1,
+        "week": 1,
+        "is_weekend": 0,
+        "is_payday": 0,
+        "is_national_holiday": 0,
+        "is_local_holiday": 0,
+        "is_earthquake": 0,
+        "transactions_lag16": 100.0,
+        **EXOG_DEFAULTS,
+    }.items():
+        panel[column] = value
+    panel.loc[panel["date"] < panel["date"].min() + pd.Timedelta(days=10), "is_earthquake"] = 1
+    split = split_panel(panel, 4)
+    changed = split.val.copy()
+    changed["target"] = 999999.0
+    first, _ = fit_predict(
+        split.train, split.val, n_estimators=8, context_days=100, drop_earthquake=True
+    )
+    second, _ = fit_predict(
+        split.train, changed, n_estimators=8, context_days=100, drop_earthquake=True
+    )
+    assert first.sort_values("row_id")["pred"].tolist() == pytest.approx(
+        second.sort_values("row_id")["pred"].tolist()
+    )
+
+
 def test_panel_adds_regional_holiday_eve_and_known_promo_leads(tmp_path: Path):
     """地域祝日・前夜・プロモの先行は、提出CSVに載っている情報だけで作る。"""
     from retail_lab.competitions.store_sales.data import Bundle, complete_daily_grid
