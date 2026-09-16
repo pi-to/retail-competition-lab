@@ -83,6 +83,17 @@ export const STORE_SALES_EXPERIMENTS: ExperimentInsight[] = [
     learned: "後処理も固定ルールにしない。0・3・7・14・21日を検証し、今回は『処理なし』を採用した。",
   },
   {
+    id: "recursive-lgbm-v1",
+    tag: "champion / latest",
+    title: "商品ファミリー別の再帰LightGBMを追加",
+    localRmsle: 0.3902,
+    outcome: "改善",
+    tried: "33商品ファミリーごとにLightGBMを学習し、予測を1日ずつ履歴へ戻して1・7・14日前のラグを安全に使った。",
+    result: "再帰モデル単体0.3966。Chronos-2 37%、再帰LightGBM 58%、一括LightGBM 5%の混合で0.3902。旧Championを0.0098改善した。",
+    why: "このデータの強い7日周期を、一括予測では捨てていた。再帰により直近週の形を使えたことが改善要因と考える。",
+    learned: "公開解法で大きかった改善が自分の検証でも再現した。次は公開LBで再現性を確認し、ファミリー別のハイパーパラメータを調整する。",
+  },
+  {
     id: "foundation-blend-v1",
     tag: "baseline / champion",
     title: "Chronos-2 74% + LightGBM 26%",
