@@ -166,6 +166,26 @@ def prepare(root: Path, source: str) -> Prepared:
                 predict=direct.fit_predict,
                 org="custom",
             ),
+            CandidateModel(
+                id="direct_intermittent",
+                title="予測距離別 LightGBM（売れない間隔つき）",
+                note=(
+                    "予測の起点までに売れていない日の続き方と水準の動きを足す。"
+                    "再帰しないので、誤差は翌日に連鎖しない。"
+                ),
+                predict=partial(direct.fit_predict, intermittent=True),
+                org="custom",
+            ),
+            CandidateModel(
+                id="direct_hurdle",
+                title="予測距離別 LightGBM（売れるか × いくら）",
+                note=(
+                    "距離別の一括予測でも、売れる確率と量を分けて学ぶ。"
+                    "再帰モデルとは外れ方が違うので混ぜる相手になる。"
+                ),
+                predict=partial(direct.fit_predict, intermittent=True, hurdle=True),
+                org="custom",
+            ),
         ],
         extra={"data_dir": str(bundle.data_dir)},
     )

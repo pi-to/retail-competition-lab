@@ -819,6 +819,75 @@ def test_direct_horizon_forecast_never_reads_future_targets():
     assert (first["pred"] >= 0).all()
 
 
+def test_direct_intermittent_and_hurdle_never_read_future_targets():
+    from retail_lab.competitions.store_sales.direct import fit_predict
+
+    panel = _panel(days=120, horizon=4)
+    for column, value in {
+        "family": "A",
+        "store_nbr": 1,
+        "type": "A",
+        "cluster": 1,
+        "onpromotion": 0.0,
+        "promo_log": 0.0,
+        "oil": 50.0,
+        "oil_lag7": 50.0,
+        "dow": 1,
+        "day": 1,
+        "month": 1,
+        "week": 1,
+        "is_weekend": 0,
+        "is_payday": 0,
+        "is_national_holiday": 0,
+        "is_local_holiday": 0,
+        "is_earthquake": 0,
+        "transactions_lag16": 100.0,
+        **EXOG_DEFAULTS,
+    }.items():
+        panel[column] = value
+    # 売れない日を混ぜる
+    panel.loc[panel.index % 4 != 0, "target"] = 0.0
+    split = split_panel(panel, 4)
+    changed = split.val.copy()
+    changed["target"] = 999999.0
+
+    first, ranked = fit_predict(
+        split.train, split.val, n_estimators=8, context_days=120, intermittent=True
+    )
+    second, _ = fit_predict(
+        split.train, changed, n_estimators=8, context_days=120, intermittent=True
+    )
+    assert first.sort_values("row_id")["pred"].tolist() == pytest.approx(
+        second.sort_values("row_id")["pred"].tolist()
+    )
+    assert {str(item["feature"]) for item in ranked} >= {"recursive_days_since_sale"}
+
+    hurdle, _ = fit_predict(
+        split.train,
+        split.val,
+        n_estimators=8,
+        context_days=120,
+        intermittent=True,
+        hurdle=True,
+    )
+    assert (hurdle["pred"] >= 0).all()
+    assert len(hurdle) == len(split.val)
+
+
+def test_direct_hurdle_requires_intermittent_features():
+    from retail_lab.competitions.store_sales.direct import fit_predict
+
+    with pytest.raises(ValueError):
+        fit_predict(pd.DataFrame(), pd.DataFrame(), hurdle=True)
+
+
+def test_direct_origin_state_marks_a_sale_on_the_same_day_as_gap_one():
+    from retail_lab.competitions.store_sales import direct
+
+    state = direct._state_through_each_day(np.array([0.0, 0.0, 5.0, 0.0]))
+    assert state["recursive_days_since_sale"].tolist() == [56.0, 56.0, 1.0, 2.0]
+
+
 def test_recursive_drop_earthquake_does_not_read_future_targets():
     from retail_lab.competitions.store_sales.recursive import fit_predict
 
