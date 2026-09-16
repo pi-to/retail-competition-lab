@@ -6,6 +6,13 @@ export type PlainSummary = {
   jargon: { term: string; plain: string }[];
   scoreBars: { label: string; score: number; kind: "ours" | "other" }[];
   scoreLead: string;
+  /** いま外しやすい売り場。棒グラフ用。 */
+  struggles: {
+    family: string;
+    familiar: string;
+    score: number;
+    plain: string;
+  }[];
 };
 
 /** 画面が1コンペを説明するために必要な文章と数字。 */

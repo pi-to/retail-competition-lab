@@ -2,7 +2,10 @@
 
 import { useState } from "react";
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
+  Cell,
   Line,
   LineChart,
   ReferenceLine,
@@ -53,6 +56,28 @@ const ACTION_VARIANT: Record<SubmitAction, "default" | "secondary" | "outline" |
   superseded: "outline",
 };
 
+/** 年表用の短い名前。グラフが読みやすくなる。 */
+const SHORT: Record<string, string> = {
+  "seasonal-naive": "先週と同じ",
+  "direct-lightgbm": "表の機械学習",
+  "timesfm-only": "TimesFM単体",
+  "chronos-full-context": "Chronos長い文脈",
+  "inverse-score-blend": "逆数で混ぜる",
+  "zero-21": "21日ゼロ強制",
+  "recursive-lgbm-v1": "売り場別の積み上げ",
+  "recursive-trees-320": "木を増やす",
+  "direct-horizon-lgbm": "日数別一括",
+  "recursive320-direct-horizon-v1": "積み上げ+一括",
+  "exog-holiday-promo-v1": "祝日・特売",
+  "exog-no-eq-v1": "地震を外す",
+  "horizon-family-blend-v1": "売り場別の混ぜ方",
+  "sparse-recursive-v1": "売れない棚向け",
+  "robust-min-family-v1": "控えめに抑える",
+  "honest-selection-v1": "採点を正直に",
+  "honest-subset-blend-v1": "顔ぶれを絞る",
+  "foundation-blend-v1": "最初の提出",
+};
+
 export function ExperimentHistory({
   competition,
   initial,
@@ -62,22 +87,40 @@ export function ExperimentHistory({
 }) {
   const rec = submitRecommendation();
   const ranked = experimentsByScore();
-  const improved = STORE_SALES_EXPERIMENTS.filter((item) => item.outcome !== "不採用");
   const failed = STORE_SALES_EXPERIMENTS.filter((item) => item.outcome === "不採用");
   const [selected, setSelected] = useState<string>(rec.experiment.id);
-  const [showFailed, setShowFailed] = useState(false);
+  const [showFailed, setShowFailed] = useState(true);
   const [history, setHistory] = useState(initial);
   const [pending, setPending] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const insight = ranked.find((item) => item.id === selected) ?? rec.experiment;
   const visible = showFailed ? ranked : ranked.filter((item) => item.outcome !== "不採用");
-  const trail = [...improved]
-    .sort((a, b) => comparableScore(b) - comparableScore(a))
+
+  /** 時系列の縮み方。点数が良い順ではなく、実験の流れで並べる。 */
+  const story = [...STORE_SALES_EXPERIMENTS]
+    .filter((item) => item.outcome !== "不採用" || item.leaderboard != null)
     .map((item, index) => ({
       step: index + 1,
-      name: item.title,
+      id: item.id,
+      name: SHORT[item.id] ?? item.title,
       score: comparableScore(item),
+      lb: item.leaderboard ?? null,
+      action: item.submitAction,
     }));
+
+  const barRows = visible.map((item) => ({
+    id: item.id,
+    name: SHORT[item.id] ?? item.title,
+    score: comparableScore(item),
+    kind:
+      item.submitAction === "submit_now"
+        ? "ours"
+        : item.submitAction === "already_submitted"
+          ? "lb"
+          : item.outcome === "不採用"
+            ? "fail"
+            : "other",
+  }));
 
   async function refresh() {
     const response = await fetch(`/api/runs?competition=${competition}`, { cache: "no-store" });
@@ -115,49 +158,95 @@ export function ExperimentHistory({
           <AlertDescription>{rec.experiment.plain}</AlertDescription>
         </Alert>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">ここまでの縮み方</CardTitle>
-            <CardDescription>
-              左から右へ、試すたびに点数が下がってきた。下ほど良い。
-              橙の破線は、実際にKaggleへ出して確かめた 0.39515。
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={trail} margin={{ left: 4, right: 12, top: 8, bottom: 4 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="step" tick={{ fontSize: 11 }} />
-                <YAxis
-                  domain={[0.36, 0.42]}
-                  tick={{ fontSize: 11 }}
-                  tickFormatter={(value) => Number(value).toFixed(2)}
-                />
-                <Tooltip
-                  formatter={(value) => Number(value).toFixed(5)}
-                  labelFormatter={(step) =>
-                    trail.find((item) => item.step === step)?.name ?? `${step}`
-                  }
-                />
-                <ReferenceLine y={0.39515} stroke="#f97316" strokeDasharray="4 4" />
-                <Line
-                  type="monotone"
-                  dataKey="score"
-                  stroke="#2563eb"
-                  strokeWidth={2}
-                  dot={{ r: 3 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
+        <div className="grid gap-3 lg:grid-cols-2">
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">ここまでの縮み方</CardTitle>
+              <CardDescription>
+                左→右で試行が進む。下ほど良い。橙の破線は本番で確かめた 0.395。
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="h-52">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={story} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="step" tick={{ fontSize: 10 }} />
+                  <YAxis
+                    domain={[0.36, 0.42]}
+                    tick={{ fontSize: 10 }}
+                    width={36}
+                    tickFormatter={(value) => Number(value).toFixed(2)}
+                  />
+                  <Tooltip
+                    formatter={(value) => Number(value).toFixed(5)}
+                    labelFormatter={(step) =>
+                      story.find((item) => item.step === step)?.name ?? `${step}`
+                    }
+                  />
+                  <ReferenceLine y={0.39515} stroke="#f97316" strokeDasharray="4 4" />
+                  <Line
+                    type="monotone"
+                    dataKey="score"
+                    stroke="#2563eb"
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">点数の並び</CardTitle>
+              <CardDescription>短いほど良い。青＝次に出す / 橙＝本番済み。</CardDescription>
+            </CardHeader>
+            <CardContent className="h-52">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart
+                  data={barRows.slice(0, 10)}
+                  layout="vertical"
+                  margin={{ left: 4, right: 36, top: 0, bottom: 0 }}
+                >
+                  <XAxis type="number" domain={[0.35, 0.65]} hide />
+                  <YAxis type="category" dataKey="name" width={108} tick={{ fontSize: 10 }} />
+                  <Tooltip formatter={(value) => Number(value).toFixed(4)} />
+                  <Bar
+                    dataKey="score"
+                    radius={[0, 3, 3, 0]}
+                    barSize={14}
+                    onClick={(data) => {
+                      const id = (data as { id?: string }).id;
+                      if (id) setSelected(id);
+                    }}
+                  >
+                    {barRows.slice(0, 10).map((row) => (
+                      <Cell
+                        key={row.id}
+                        fill={
+                          row.kind === "ours"
+                            ? "#2563eb"
+                            : row.kind === "lb"
+                              ? "#ea580c"
+                              : row.kind === "fail"
+                                ? "#e4e4e7"
+                                : "#a1a1aa"
+                        }
+                        opacity={row.id === selected ? 1 : 0.75}
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </div>
 
         <Card>
-          <CardHeader>
-            <CardTitle className="text-base">試したこと</CardTitle>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">実験の一覧</CardTitle>
             <CardDescription>
-              点数が良い順。点数は、混ぜ方を決めるのに使っていない店舗で採点したものです。
-              行を押すと、なぜそうなったかが下に出ます。
+              行を押すと下に一言だけ出ます。点数は「混ぜ方を決めていない店」で採点。
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
@@ -165,8 +254,8 @@ export function ExperimentHistory({
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>提出</TableHead>
-                    <TableHead className="text-right">点数</TableHead>
+                    <TableHead className="w-28">提出</TableHead>
+                    <TableHead className="w-20 text-right">点数</TableHead>
                     <TableHead>やったこと</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -175,7 +264,11 @@ export function ExperimentHistory({
                     <TableRow
                       key={item.id}
                       data-state={item.id === selected ? "selected" : undefined}
-                      className={item.submitAction === "submit_now" ? "bg-primary/5" : undefined}
+                      className={
+                        item.submitAction === "submit_now"
+                          ? "cursor-pointer bg-primary/5"
+                          : "cursor-pointer"
+                      }
                       onClick={() => setSelected(item.id)}
                     >
                       <TableCell>
@@ -187,17 +280,19 @@ export function ExperimentHistory({
                           </Badge>
                         )}
                       </TableCell>
-                      <TableCell className="text-right font-mono font-medium">
+                      <TableCell className="text-right font-mono text-sm font-medium">
                         {comparableScore(item).toFixed(4)}
                         {item.leaderboard != null ? (
-                          <span className="block text-xs font-normal text-muted-foreground">
+                          <span className="block text-[10px] font-normal text-orange-600">
                             本番 {item.leaderboard.toFixed(4)}
                           </span>
                         ) : null}
                       </TableCell>
-                      <TableCell className="max-w-xl whitespace-normal">
-                        <span className="font-medium">{item.title}</span>
-                        <span className="block text-sm text-muted-foreground">{item.plain}</span>
+                      <TableCell className="max-w-xl whitespace-normal py-2">
+                        <span className="text-sm font-medium">
+                          {SHORT[item.id] ?? item.title}
+                        </span>
+                        <span className="block text-xs text-muted-foreground">{item.plain}</span>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -224,8 +319,7 @@ export function ExperimentHistory({
         <Alert>
           <AlertTitle>前の版にいつでも戻せます</AlertTitle>
           <AlertDescription>
-            提出用のCSVは、いま選ばれている1本だけ。過去の実験はそのまま残してあるので、
-            悪くなったら押すだけで戻せます。
+            提出用CSVはいま選ばれている1本だけ。悪くなったら押すだけで戻せます。
           </AlertDescription>
         </Alert>
         {message ? <p className="text-sm text-muted-foreground">{message}</p> : null}
@@ -314,15 +408,9 @@ export function ExperimentHistory({
         <Card>
           <CardHeader>
             <CardTitle>DevelopersIO記事草稿</CardTitle>
-            <CardDescription>
-              うまくいった話だけでなく、効かなかった試行とその理由仮説も入れています。
-            </CardDescription>
+            <CardDescription>うまくいった話と、いかなかった試行の両方を入れています。</CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-3 text-sm text-muted-foreground">
-            <p>
-              タイトル案：「時系列基盤モデルを小売需要予測に入れてみた —
-              うまくいったこと、いかなかったこと」
-            </p>
+          <CardContent>
             <Button asChild>
               <a href="/api/article">Markdown草稿をダウンロード</a>
             </Button>
@@ -336,36 +424,29 @@ export function ExperimentHistory({
 function InsightDetail({ insight }: { insight: ExperimentInsight }) {
   return (
     <Card size="sm">
-      <CardHeader>
+      <CardHeader className="pb-2">
         <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
-          {insight.title}
+          {SHORT[insight.id] ?? insight.title}
           <Badge variant={ACTION_VARIANT[insight.submitAction]}>
             {SUBMIT_LABEL[insight.submitAction]}
           </Badge>
         </CardTitle>
         <CardDescription>
           模擬試験 {comparableScore(insight).toFixed(5)}
-          {insight.holdoutRmsle != null
-            ? `（当てはめた行なら ${insight.localRmsle.toFixed(5)}）`
-            : ""}
-          {insight.leaderboard ? ` / 本番 ${insight.leaderboard.toFixed(5)}` : " / 本番は未提出"}
+          {insight.leaderboard ? ` / 本番 ${insight.leaderboard.toFixed(5)}` : ""}
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-2 text-sm text-muted-foreground">
+      <CardContent className="space-y-1.5 text-sm text-muted-foreground">
         <p>
-          <span className="font-medium text-foreground">やったこと：</span>
-          {insight.tried}
+          <span className="font-medium text-foreground">つまり：</span>
+          {insight.plain}
         </p>
         <p>
           <span className="font-medium text-foreground">結果：</span>
           {insight.result}
         </p>
         <p>
-          <span className="font-medium text-foreground">なぜそうなったか：</span>
-          {insight.why}
-        </p>
-        <p>
-          <span className="font-medium text-foreground">次への学び：</span>
+          <span className="font-medium text-foreground">学び：</span>
           {insight.learned}
         </p>
       </CardContent>

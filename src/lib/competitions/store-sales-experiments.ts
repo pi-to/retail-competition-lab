@@ -311,12 +311,12 @@ export function submitRecommendation(
   const score = comparableScore(experiment);
   return {
     experiment,
-    headline: `提出するのは「${experiment.title}」（模擬試験 ${score.toFixed(5)}）`,
+    headline: `次に出すのは「${experiment.title}」（模擬試験 ${score.toFixed(5)}）`,
     whyThis:
-      "重みを決めていない店舗で採点した点数がいちばん低いRun。提出CSV（ヘッダ+28,512行）もこの成果物です。公開LBは未記録なので、次にKaggleへ出すならこれ1本。",
+      "見ていない店で採点した点がいちばん低い版。次にKaggleへ出すならこれ1本。",
     doNotSubmit: submitted
-      ? `公開LB ${submitted.leaderboard?.toFixed(5)} の「${submitted.title}」は提出済みの古い混合（ローカル ${submitted.localRmsle.toFixed(5)}）。同じCSVを出し直さない。灰色の「出さない」は単体・失敗実験。`
-      : "失敗実験と単体スコアは出さない。混ぜたChampionだけ出す。",
+      ? `本番 ${submitted.leaderboard?.toFixed(5)} の古い版は出し直さない。`
+      : "失敗実験と単体は出さない。混ぜた版だけ出す。",
   };
 }
 

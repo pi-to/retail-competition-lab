@@ -22,8 +22,8 @@ import type { CompetitionContent } from "@/lib/competitions";
 export function Overview({ content }: { content: CompetitionContent }) {
   const { metric, plain } = content;
   return (
-    <div className="flex flex-col gap-8">
-      <header className="flex flex-col gap-4">
+    <div className="flex flex-col gap-6">
+      <header className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center gap-2">
           {content.badges.map((badge, i) => (
             <Badge key={badge} variant={i === 0 ? "default" : i === 1 ? "secondary" : "outline"}>
@@ -34,15 +34,17 @@ export function Overview({ content }: { content: CompetitionContent }) {
         <h1 className="font-heading max-w-3xl text-3xl leading-tight tracking-tight sm:text-4xl">
           {content.headline}
         </h1>
-        <p className="max-w-3xl text-lg text-muted-foreground">{plain.gist}</p>
+        <p className="max-w-2xl text-base text-muted-foreground">{plain.gist}</p>
       </header>
 
-      <section className="grid gap-3 md:grid-cols-3">
+      <section className="grid gap-3 sm:grid-cols-3">
         {plain.cards.map((card) => (
-          <Card key={card.question} size="sm">
-            <CardHeader>
-              <CardDescription>{card.question}</CardDescription>
-              <CardTitle className="text-base">{card.answer}</CardTitle>
+          <Card key={card.question} size="sm" className="bg-muted/30">
+            <CardHeader className="gap-1">
+              <CardDescription className="text-xs tracking-wide uppercase">
+                {card.question}
+              </CardDescription>
+              <CardTitle className="text-base leading-snug">{card.answer}</CardTitle>
             </CardHeader>
             <CardContent className="text-sm text-muted-foreground">{card.plain}</CardContent>
           </Card>
@@ -51,9 +53,9 @@ export function Overview({ content }: { content: CompetitionContent }) {
 
       <section className="grid gap-3 lg:grid-cols-2">
         <Card>
-          <CardHeader>
+          <CardHeader className="pb-2">
             <CardTitle className="text-base">予測する数</CardTitle>
-            <CardDescription>掛け算するとこの数になる</CardDescription>
+            <CardDescription>店 × 売り場 × 日数</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -65,26 +67,26 @@ export function Overview({ content }: { content: CompetitionContent }) {
               <span className="text-muted-foreground">=</span>
               <span className="font-mono text-2xl font-medium">{plain.math.total}</span>
             </div>
-            <p className="mt-3 text-sm text-muted-foreground">{plain.math.unit}</p>
+            <p className="mt-2 text-sm text-muted-foreground">{plain.math.unit}</p>
             <Horizon />
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader>
-            <CardTitle className="text-base">いまどれくらい当たるか</CardTitle>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">いまの点数</CardTitle>
             <CardDescription>{plain.scoreLead}</CardDescription>
           </CardHeader>
-          <CardContent className="h-56">
+          <CardContent className="h-48">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart
                 data={plain.scoreBars}
                 layout="vertical"
-                margin={{ left: 8, right: 46, top: 4, bottom: 4 }}
+                margin={{ left: 4, right: 40, top: 0, bottom: 0 }}
               >
                 <XAxis type="number" domain={[0, 0.7]} hide />
-                <YAxis type="category" dataKey="label" width={132} tick={{ fontSize: 11 }} />
-                <Bar dataKey="score" radius={[0, 4, 4, 0]}>
+                <YAxis type="category" dataKey="label" width={100} tick={{ fontSize: 11 }} />
+                <Bar dataKey="score" radius={[0, 4, 4, 0]} barSize={18}>
                   {plain.scoreBars.map((bar) => (
                     <Cell key={bar.label} fill={bar.kind === "ours" ? "#2563eb" : "#d4d4d8"} />
                   ))}
@@ -101,21 +103,72 @@ export function Overview({ content }: { content: CompetitionContent }) {
         </Card>
       </section>
 
-      <section className="flex flex-col gap-3">
-        <SectionTitle title="出てくる言葉" sub="専門語はそのまま、意味だけ言い換えます" />
+      <section>
         <Card>
-          <CardContent className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">いま一番困っている売り場</CardTitle>
+            <CardDescription>
+              英語の売り場名はそのまま。右の言い方でイメージしてください。長いほど外しやすい。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart
+                data={plain.struggles}
+                layout="vertical"
+                margin={{ left: 4, right: 40, top: 4, bottom: 4 }}
+              >
+                <XAxis type="number" domain={[0, 0.7]} hide />
+                <YAxis
+                  type="category"
+                  dataKey="familiar"
+                  width={108}
+                  tick={{ fontSize: 11 }}
+                />
+                <Bar dataKey="score" fill="#ea580c" radius={[0, 4, 4, 0]} barSize={16}>
+                  <LabelList
+                    dataKey="score"
+                    position="right"
+                    className="fill-foreground font-mono"
+                    fontSize={11}
+                  />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+            <ul className="mt-2 grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
+              {plain.struggles.map((item) => (
+                <li key={item.family}>
+                  <span className="font-medium text-foreground">{item.familiar}</span>
+                  <span className="mx-1 font-mono text-[10px]">({item.family})</span>
+                  — {item.plain}
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      </section>
+
+      <section>
+        <Card size="sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">出てくる言葉</CardTitle>
+            <CardDescription>言い換えなくていい。意味だけ添えます。</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-2">
             {plain.jargon.map((item) => (
-              <div key={item.term} className="text-sm">
+              <span
+                key={item.term}
+                className="inline-flex max-w-full flex-col rounded-md border bg-background px-2.5 py-1.5 text-xs"
+              >
                 <span className="font-medium">{item.term}</span>
-                <span className="block text-muted-foreground">{item.plain}</span>
-              </div>
+                <span className="text-muted-foreground">{item.plain}</span>
+              </span>
             ))}
           </CardContent>
         </Card>
       </section>
 
-      <Details summary="なぜこの点数で競うのか（くわしく）">
+      <Details summary="点数の仕組み（くわしく）">
         <p className="text-sm text-muted-foreground">{metric.formulaPlain}</p>
         <div className="grid gap-3 md:grid-cols-2">
           {metric.reasons.slice(0, 4).map((r) => (
@@ -140,13 +193,13 @@ export function Overview({ content }: { content: CompetitionContent }) {
                     <TableHead className="text-right">実績</TableHead>
                     <TableHead className="text-right">予測</TableHead>
                     <TableHead className="text-right">ふつうの誤差</TableHead>
-                    <TableHead className="text-right">{metric.name} の誤差</TableHead>
+                    <TableHead className="text-right">{metric.name}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {metric.example.rows.map((r) => (
                     <TableRow key={r.case}>
-                      <TableCell className="min-w-36">{r.case}</TableCell>
+                      <TableCell>{r.case}</TableCell>
                       <TableCell className="text-right font-mono">{r.actual}</TableCell>
                       <TableCell className="text-right font-mono">{r.pred}</TableCell>
                       <TableCell className="text-right font-mono">{r.rawError}</TableCell>
@@ -157,12 +210,11 @@ export function Overview({ content }: { content: CompetitionContent }) {
               </Table>
             </div>
             <p className="text-sm text-muted-foreground">{metric.example.note}</p>
-            <p className="text-sm text-muted-foreground">{metric.limits}</p>
           </CardContent>
         </Card>
       </Details>
 
-      <Details summary="なぜ簡単に当たらないのか（くわしく）">
+      <Details summary="なぜ簡単に当たらないのか">
         <div className="grid gap-3 sm:grid-cols-2">
           {content.difficulty.map((d) => (
             <Card key={d.title} size="sm">
@@ -173,31 +225,6 @@ export function Overview({ content }: { content: CompetitionContent }) {
             </Card>
           ))}
         </div>
-        <Card>
-          <CardContent className="flex flex-col gap-3">
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-20">{metric.name}</TableHead>
-                    <TableHead>やり方</TableHead>
-                    <TableHead className="text-right">外し方の目安</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {content.scoreGuide.map((s) => (
-                    <TableRow key={s.score}>
-                      <TableCell className="font-mono">{s.score}</TableCell>
-                      <TableCell>{s.label}</TableCell>
-                      <TableCell className="text-right text-muted-foreground">{s.factor}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-            <p className="text-sm text-muted-foreground">{content.scoreNote}</p>
-          </CardContent>
-        </Card>
       </Details>
     </div>
   );
@@ -207,23 +234,22 @@ function Chip({ value }: { value: string }) {
   return <span className="rounded-md bg-muted px-2 py-1 font-medium">{value}</span>;
 }
 
-/** 学習と予測の関係を1本の帯で見せる。数字を読まなくても形が分かるように。 */
 function Horizon() {
   return (
-    <div className="mt-4 flex flex-col gap-2">
-      <div className="flex h-7 overflow-hidden rounded-md text-xs">
+    <div className="mt-4 flex flex-col gap-1.5">
+      <div className="flex h-7 overflow-hidden rounded-md text-[11px]">
         <div className="flex flex-[6] items-center justify-center bg-muted text-muted-foreground">
-          これまでの売上（4年半）
+          これまでの売上
         </div>
         <div className="flex flex-[1] items-center justify-center bg-primary/15 text-primary">
-          隠して採点する16日
+          模擬試験16日
         </div>
         <div className="flex flex-[1] items-center justify-center bg-primary text-primary-foreground">
-          提出する16日
+          提出16日
         </div>
       </div>
       <p className="text-xs text-muted-foreground">
-        真ん中は答えを隠した模擬試験。ここで良かった作り方だけを、右の本番に使います。
+        真ん中で試して良かった作り方だけを、右の本番に使います。
       </p>
     </div>
   );
@@ -231,20 +257,11 @@ function Horizon() {
 
 function Details({ summary, children }: { summary: string; children: React.ReactNode }) {
   return (
-    <details className="group rounded-lg border p-4">
+    <details className="group rounded-lg border px-4 py-3">
       <summary className="cursor-pointer text-sm font-medium marker:text-muted-foreground">
         {summary}
       </summary>
-      <div className="mt-4 flex flex-col gap-3">{children}</div>
+      <div className="mt-3 flex flex-col gap-3">{children}</div>
     </details>
-  );
-}
-
-function SectionTitle({ title, sub }: { title: string; sub: string }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <h2 className="font-heading text-xl tracking-tight">{title}</h2>
-      <p className="text-sm text-muted-foreground">{sub}</p>
-    </div>
   );
 }
