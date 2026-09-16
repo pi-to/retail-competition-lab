@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -15,7 +16,7 @@ FAMILIES = [
     "DAIRY",
     "BREAD/BAKERY",
 ]
-STORES = [
+STORES: list[dict[str, Any]] = [
     {"store_nbr": 1, "city": "Quito", "state": "Pichincha", "type": "D", "cluster": 13},
     {"store_nbr": 3, "city": "Quito", "state": "Pichincha", "type": "D", "cluster": 8},
     {"store_nbr": 44, "city": "Quito", "state": "Pichincha", "type": "A", "cluster": 5},
@@ -49,20 +50,76 @@ def generate_demo(data_dir: Path) -> None:
 
     holidays = pd.DataFrame(
         [
-            {"date": "2017-01-01", "type": "Holiday", "locale": "National", "locale_name": "Ecuador", "description": "New Year", "transferred": False},
-            {"date": "2017-02-27", "type": "Holiday", "locale": "National", "locale_name": "Ecuador", "description": "Carnival", "transferred": False},
-            {"date": "2017-04-14", "type": "Holiday", "locale": "National", "locale_name": "Ecuador", "description": "Good Friday", "transferred": False},
-            {"date": "2017-05-01", "type": "Holiday", "locale": "National", "locale_name": "Ecuador", "description": "Labor Day", "transferred": False},
-            {"date": "2017-05-24", "type": "Holiday", "locale": "National", "locale_name": "Ecuador", "description": "Battle of Pichincha", "transferred": False},
-            {"date": "2017-08-10", "type": "Holiday", "locale": "National", "locale_name": "Ecuador", "description": "Independence", "transferred": False},
-            {"date": "2017-08-15", "type": "Holiday", "locale": "Local", "locale_name": "Quito", "description": "Fundacion de Quito", "transferred": False},
-            {"date": "2017-08-24", "type": "Holiday", "locale": "National", "locale_name": "Ecuador", "description": "Demo National", "transferred": False},
+            {
+                "date": "2017-01-01",
+                "type": "Holiday",
+                "locale": "National",
+                "locale_name": "Ecuador",
+                "description": "New Year",
+                "transferred": False,
+            },
+            {
+                "date": "2017-02-27",
+                "type": "Holiday",
+                "locale": "National",
+                "locale_name": "Ecuador",
+                "description": "Carnival",
+                "transferred": False,
+            },
+            {
+                "date": "2017-04-14",
+                "type": "Holiday",
+                "locale": "National",
+                "locale_name": "Ecuador",
+                "description": "Good Friday",
+                "transferred": False,
+            },
+            {
+                "date": "2017-05-01",
+                "type": "Holiday",
+                "locale": "National",
+                "locale_name": "Ecuador",
+                "description": "Labor Day",
+                "transferred": False,
+            },
+            {
+                "date": "2017-05-24",
+                "type": "Holiday",
+                "locale": "National",
+                "locale_name": "Ecuador",
+                "description": "Battle of Pichincha",
+                "transferred": False,
+            },
+            {
+                "date": "2017-08-10",
+                "type": "Holiday",
+                "locale": "National",
+                "locale_name": "Ecuador",
+                "description": "Independence",
+                "transferred": False,
+            },
+            {
+                "date": "2017-08-15",
+                "type": "Holiday",
+                "locale": "Local",
+                "locale_name": "Quito",
+                "description": "Fundacion de Quito",
+                "transferred": False,
+            },
+            {
+                "date": "2017-08-24",
+                "type": "Holiday",
+                "locale": "National",
+                "locale_name": "Ecuador",
+                "description": "Demo National",
+                "transferred": False,
+            },
         ]
     )
     holidays.to_csv(data_dir / "holidays_events.csv", index=False)
 
     holiday_dates = set(pd.to_datetime(holidays["date"]))
-    family_level = {
+    family_level: dict[str, float] = {
         "GROCERY I": 420,
         "BEVERAGES": 280,
         "PRODUCE": 160,
@@ -70,15 +127,15 @@ def generate_demo(data_dir: Path) -> None:
         "DAIRY": 130,
         "BREAD/BAKERY": 70,
     }
-    store_mult = {1: 0.7, 3: 1.1, 44: 1.8, 50: 1.2}
+    store_mult: dict[int, float] = {1: 0.7, 3: 1.1, 44: 1.8, 50: 1.2}
 
-    rows_train: list[dict] = []
-    rows_test: list[dict] = []
-    tx_rows: list[dict] = []
+    rows_train: list[dict[str, Any]] = []
+    rows_test: list[dict[str, Any]] = []
+    tx_rows: list[dict[str, Any]] = []
     row_id = 0
 
     for store in STORES:
-        sn = store["store_nbr"]
+        sn = int(store["store_nbr"])
         for d in all_dates:
             dow = d.weekday()
             weekend = 1.15 if dow >= 5 else 1.0
@@ -88,7 +145,9 @@ def generate_demo(data_dir: Path) -> None:
                 {
                     "date": d.strftime("%Y-%m-%d"),
                     "store_nbr": sn,
-                    "transactions": int(1400 * store_mult[sn] * weekend * payday * hol + rng.normal(0, 40)),
+                    "transactions": int(
+                        1400 * store_mult[sn] * weekend * payday * hol + rng.normal(0, 40)
+                    ),
                 }
             )
 
@@ -105,7 +164,7 @@ def generate_demo(data_dir: Path) -> None:
                 sales = max(0.0, base * weekly * payday * hol * promo_lift * noise)
                 if fam == "BREAD/BAKERY" and sn == 1:
                     sales *= 0.15
-                rec = {
+                rec: dict[str, Any] = {
                     "id": row_id,
                     "date": d.strftime("%Y-%m-%d"),
                     "store_nbr": sn,
@@ -124,9 +183,14 @@ def generate_demo(data_dir: Path) -> None:
     train.to_csv(data_dir / "train.csv", index=False)
     test.to_csv(data_dir / "test.csv", index=False)
     pd.DataFrame(tx_rows).to_csv(data_dir / "transactions.csv", index=False)
-    pd.DataFrame({"id": test["id"], "sales": 0.0}).to_csv(data_dir / "sample_submission.csv", index=False)
+    pd.DataFrame({"id": test["id"], "sales": 0.0}).to_csv(
+        data_dir / "sample_submission.csv", index=False
+    )
     meta = {
-        "note": "Synthetic Favorita-shaped sample. Replace with official Kaggle CSVs for a real submission.",
+        "note": (
+            "Synthetic Favorita-shaped sample. "
+            "Replace with official Kaggle CSVs for a real submission."
+        ),
         "train_dates": [str(train_dates.min().date()), str(train_dates.max().date())],
         "test_dates": [str(test_dates.min().date()), str(test_dates.max().date())],
         "n_series": len(STORES) * len(FAMILIES),

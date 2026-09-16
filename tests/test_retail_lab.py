@@ -1,5 +1,32 @@
+from pathlib import Path
+
 import numpy as np
-from metrics import business_metrics, rmsle
+import pandas as pd
+import pytest
+
+from retail_lab import blending, registry
+from retail_lab.competition import CompetitionSpec
+from retail_lab.metrics import business_metrics, rmsle
+from retail_lab.models import naive
+from retail_lab.validation import split_panel
+
+
+def _panel(days: int = 40, horizon: int = 4) -> pd.DataFrame:
+    dates = pd.date_range("2017-01-01", periods=days + horizon)
+    rows = []
+    row_id = 0
+    for series in ("1::A", "2::B"):
+        for i, date in enumerate(dates):
+            rows.append(
+                {
+                    "row_id": row_id,
+                    "series_id": series,
+                    "date": date,
+                    "target": float(10 + i % 7) if i < days else np.nan,
+                }
+            )
+            row_id += 1
+    return pd.DataFrame(rows)
 
 
 def test_rmsle_zero():
@@ -8,9 +35,7 @@ def test_rmsle_zero():
 
 
 def test_rmsle_clips_negative_predictions():
-    y = np.array([1.0, 3.0])
-    p = np.array([-1.0, 3.0])
-    assert rmsle(y, p) > 0
+    assert rmsle(np.array([1.0, 3.0]), np.array([-1.0, 3.0])) > 0
 
 
 def test_rmsle_punishes_relative_error_not_absolute():
@@ -36,3 +61,73 @@ def test_business_metrics_direction():
     assert under["bias"] < 0
     assert under["under_rate"] == 1.0
     assert over["wape"] == under["wape"]
+
+
+def test_split_panel_holds_out_the_last_horizon_days():
+    horizon = 4
+    split = split_panel(_panel(horizon=horizon), horizon)
+    assert split.val["date"].nunique() == horizon
+    assert split.train["date"].max() < split.val["date"].min()
+    assert split.future["target"].isna().all()
+    assert len(split.labeled) == len(split.train) + len(split.val)
+
+
+def test_seasonal_naive_covers_every_future_row():
+    horizon = 4
+    panel = _panel(horizon=horizon)
+    split = split_panel(panel, horizon)
+    pred = naive.seasonal_naive(split.train, split.val)
+    assert len(pred) == len(split.val)
+    assert pred["pred"].notna().all()
+    assert (pred["pred"] >= 0).all()
+
+
+def test_inverse_rmsle_weights_favor_the_better_model():
+    weights = blending.inverse_rmsle_weights({"good": 0.2, "bad": 0.4})
+    assert weights["good"] > weights["bad"]
+    assert pytest.approx(sum(weights.values()), abs=1e-9) == 1.0
+
+
+def test_inverse_rmsle_weights_ignore_unusable_scores():
+    assert blending.inverse_rmsle_weights({"broken": float("nan"), "zero": 0.0}) == {}
+
+
+def test_zero_out_dead_series_silences_discontinued_items():
+    history = pd.DataFrame(
+        {
+            "series_id": ["dead"] * 3 + ["alive"] * 3,
+            "date": list(pd.date_range("2017-01-01", periods=3)) * 2,
+            "target": [0.0, 0.0, 0.0, 5.0, 6.0, 7.0],
+        }
+    )
+    pred = pd.DataFrame({"row_id": [1, 2], "series_id": ["dead", "alive"], "pred": [4.0, 4.0]})
+    out = blending.zero_out_dead_series(history, pred, lookback=7).set_index("series_id")
+    assert out.loc["dead", "pred"] == 0.0
+    assert out.loc["alive", "pred"] == 4.0
+
+
+def test_registry_exposes_specs_with_matching_slugs():
+    specs = registry.specs()
+    assert specs, "コンペが1つも登録されていない"
+    for spec in specs:
+        assert isinstance(spec, CompetitionSpec)
+        assert registry.spec(spec.slug) is spec
+        assert spec.horizon > 0
+        assert spec.required_files
+
+
+def test_registry_rejects_unknown_slug():
+    with pytest.raises(KeyError):
+        registry.get("no-such-competition")
+
+
+def test_demo_data_matches_the_official_column_names(tmp_path: Path):
+    from retail_lab.competitions.store_sales.demo import generate_demo
+
+    generate_demo(tmp_path)
+    train = pd.read_csv(tmp_path / "train.csv")
+    test = pd.read_csv(tmp_path / "test.csv")
+    assert list(train.columns) == ["id", "date", "store_nbr", "family", "onpromotion", "sales"]
+    assert list(test.columns) == ["id", "date", "store_nbr", "family", "onpromotion"]
+    assert test["date"].nunique() == 16
+    assert set(train["id"]).isdisjoint(set(test["id"]))

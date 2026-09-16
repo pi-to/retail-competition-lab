@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Python 側の成果物。uv が作る仮想環境には JS が同梱されている。
+    ".venv/**",
+    "outputs/**",
   ]),
 ]);
 

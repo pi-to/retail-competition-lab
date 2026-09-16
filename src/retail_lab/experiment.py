@@ -1,0 +1,333 @@
+"""コンペをまたいで共通の実験ループ。
+
+ナイーブ → 表モデル → 基盤モデル2種 → 混合、の順に同じ検証窓で採点する。
+コンペ側が用意するのはデータと特徴だけ。
+"""
+
+from __future__ import annotations
+
+import json
+import time
+import traceback
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+
+from retail_lab import DATE, ROW_ID, SERIES_ID, TARGET, blending
+from retail_lab.competition import Prepared
+from retail_lab.models import chronos, gbdt, naive, timesfm
+from retail_lab.status import write_status
+from retail_lab.validation import Split, split_panel
+
+JsonDict = dict[str, Any]
+PRED = "pred"
+
+
+def _pct(x: float) -> str:
+    return f"{x * 100:.1f}%"
+
+
+def _preview(split: Split, pred_map: dict[str, pd.DataFrame], blended: pd.DataFrame) -> JsonDict:
+    """一番売れている系列だけを抜き出して、当たり方を目で見られるようにする。"""
+    totals = split.train.groupby(SERIES_ID)[TARGET].sum().sort_values(ascending=False)
+    sid = str(totals.index[0])
+    hist = split.train[split.train[SERIES_ID] == sid].sort_values(DATE).tail(42)
+    actual = split.val[split.val[SERIES_ID] == sid].sort_values(DATE)
+    models: dict[str, list[JsonDict]] = {}
+    for name, frame in {**pred_map, "blend": blended}.items():
+        sub = frame[frame[SERIES_ID] == sid].sort_values(DATE)
+        models[name] = [
+            {"date": d.strftime("%Y-%m-%d"), "pred": float(p)}
+            for d, p in zip(sub[DATE], sub[PRED], strict=True)
+        ]
+    return {
+        "series_id": sid,
+        "history": [
+            {"date": d.strftime("%Y-%m-%d"), "sales": float(v)}
+            for d, v in zip(hist[DATE], hist[TARGET], strict=True)
+        ],
+        "actual": [
+            {"date": d.strftime("%Y-%m-%d"), "sales": float(v)}
+            for d, v in zip(actual[DATE], actual[TARGET], strict=True)
+        ],
+        "models": models,
+    }
+
+
+def _client_report(
+    prepared: Prepared, split: Split, models_meta: list[JsonDict], n_series: int
+) -> JsonDict:
+    """非エンジニアが読む前提のまとめ。数字の意味を文章で添える。"""
+    horizon = prepared.spec.horizon
+    by_id = {m["id"]: m for m in models_meta if m.get("status") == "ok"}
+    blend = by_id.get("blend")
+    base = by_id.get("seasonal_naive")
+
+    usage: list[JsonDict] = [
+        {
+            "label": "学習に使った期間",
+            "value": f"{split.train[DATE].min().date()} 〜 {split.train[DATE].max().date()}",
+            "detail": f"{int(split.train[DATE].nunique())}日分 / {len(split.train):,}行",
+        },
+        {
+            "label": "答え合わせに使った期間",
+            "value": f"{split.val[DATE].min().date()} 〜 {split.val[DATE].max().date()}",
+            "detail": f"{int(split.val[DATE].nunique())}日分 / {len(split.val):,}行",
+        },
+        {
+            "label": "予測した組み合わせ",
+            "value": f"{n_series:,} 系列",
+            "detail": prepared.spec.unit,
+        },
+        {
+            "label": "検証の作り方",
+            "value": f"最後の{horizon}日を隠す",
+            "detail": f"全モデルがこの{horizon}日を一切見ずに予測し、あとで実績と突き合わせた",
+        },
+    ]
+
+    interpretation: list[JsonDict] = []
+    if blend is not None:
+        low = 100 * (1 - blend["wape"])
+        high = 100 * (1 + blend["wape"])
+        interpretation.append(
+            {
+                "title": "どれくらい当たったか",
+                "body": (
+                    f"採用した混合モデルの予測は、隠した{horizon}日間の合計に対して平均 "
+                    f"{_pct(blend['wape'])} ずれました。"
+                    f"言い換えると、100個売れる日を約{low:.0f}〜{high:.0f}個の幅で見込めています。"
+                ),
+            }
+        )
+    if blend is not None and base is not None and base["wape"] > 0:
+        gain = 1 - blend["wape"] / base["wape"]
+        body = (
+            f"「先週の同じ曜日と同じだけ売れる」と考える単純な方法は同じ期間で "
+            f"{_pct(base['wape'])} ずれました。混合モデルはその誤差を {_pct(gain)} 減らしています。"
+            if gain > 0
+            else (
+                f"単純な方法は {_pct(base['wape'])} でした。"
+                "今回のデータでは差が出ていないので、特徴やモデルを足す余地があります。"
+            )
+        )
+        interpretation.append({"title": "勘と比べてどうか", "body": body})
+    if blend is not None:
+        direction = "多め" if blend["bias"] > 0 else "少なめ"
+        interpretation.append(
+            {
+                "title": "外れ方の癖",
+                "body": (
+                    f"合計では実績より {_pct(abs(blend['bias']))} {direction}に見込んでいます。"
+                    f"個別の予測では {_pct(blend['under_rate'])} が実績より少ない値で、"
+                    "ここが欠品につながる側です。"
+                    "発注に使うときは、この比率を見て安全在庫を決められます。"
+                ),
+            }
+        )
+    interpretation.append(
+        {
+            "title": "この数字の読み方の注意",
+            "body": (
+                "公式データで測った結果なので、Kaggle に提出したときのスコアの目安になります。"
+                if prepared.source == "kaggle"
+                else (
+                    "いまはデモ用の縮小データです。手順が動くことの確認用で、"
+                    "誤差の絶対値は公式データとは変わります。公式CSVで再実行すると本番の水準が出ます。"
+                )
+            ),
+        }
+    )
+
+    return {
+        "data_usage": usage,
+        "interpretation": interpretation,
+        "glossary": [
+            {
+                "term": "誤差率",
+                "body": "予測と実績のずれを合計して、実績の合計で割った値。小さいほど良い。",
+            },
+            {
+                "term": "偏り",
+                "body": (
+                    "全体として多めに見たか少なめに見たか。プラスは在庫過多、マイナスは欠品寄り。"
+                ),
+            },
+            {"term": "欠品側の割合", "body": "実績より少なく見積もった予測の割合。"},
+            {
+                "term": "RMSLE",
+                "body": "コンペの採点式。割合のずれを見る指標で、順位はこれで決まる。",
+            },
+        ],
+    }
+
+
+def run_experiment(prepared: Prepared, out_dir: Path, skip_foundation: bool = False) -> JsonDict:
+    started = time.time()
+    spec = prepared.spec
+    horizon = spec.horizon
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    split = split_panel(prepared.panel, horizon)
+    labeled = split.labeled
+    n_series = int(prepared.panel[SERIES_ID].nunique())
+
+    models_meta: list[JsonDict] = []
+    val_preds: dict[str, pd.DataFrame] = {}
+    test_preds: dict[str, pd.DataFrame] = {}
+    scores: dict[str, float] = {}
+    importance: list[dict[str, float | str]] = []
+
+    def register(
+        model_id: str,
+        title: str,
+        note: str,
+        val_df: pd.DataFrame,
+        test_df: pd.DataFrame,
+        extra: JsonDict | None = None,
+    ) -> None:
+        score = blending.score_against(val_df, split.val)
+        business = blending.business_against(val_df, split.val)
+        scores[model_id] = score
+        val_preds[model_id] = val_df
+        test_preds[model_id] = test_df
+        row: JsonDict = {
+            "id": model_id,
+            "title": title,
+            "note": note,
+            "rmsle": round(score, 5),
+            "status": "ok",
+            "wape": round(business["wape"], 4),
+            "bias": round(business["bias"], 4),
+            "under_rate": round(business["under_rate"], 4),
+            "mae": round(business["mae"], 2),
+        }
+        if extra:
+            row.update(extra)
+        models_meta.append(row)
+
+    def skipped(model_id: str, title: str, checkpoint: str, org: str, exc: Exception) -> None:
+        models_meta.append(
+            {
+                "id": model_id,
+                "title": title,
+                "note": "読み込みまたは推論に失敗",
+                "status": "skipped",
+                "error": f"{exc}",
+                "checkpoint": checkpoint,
+                "org": org,
+            }
+        )
+        (out_dir / f"{model_id}_error.txt").write_text(traceback.format_exc(), encoding="utf-8")
+
+    write_status(out_dir, "naive", "季節ナイーブ（同じ曜日の直近）", 15)
+    register(
+        "seasonal_naive",
+        "季節ナイーブ",
+        "同じ曜日の最後の実績。下限。これを大きく下回れない手法は捨てる。",
+        naive.seasonal_naive(split.train, split.val),
+        naive.seasonal_naive(labeled, split.future),
+    )
+
+    write_status(out_dir, "lgbm", "LightGBM（系列を横断する表モデル）", 30)
+    val_gbdt, _ = gbdt.fit_predict(split.train, split.val, prepared.features, prepared.categoricals)
+    test_gbdt, importance = gbdt.fit_predict(
+        labeled, split.future, prepared.features, prepared.categoricals
+    )
+    register(
+        "lightgbm",
+        "LightGBM",
+        f"ラグ{horizon}日以上 + プロモ + 祝日 + 原油 + 給料日 + 店属性。log1p 学習。",
+        val_gbdt,
+        test_gbdt,
+        {"top_features": importance[:8]},
+    )
+
+    if not skip_foundation:
+        try:
+            write_status(out_dir, "chronos", "Amazon Chronos-2（共変量つきゼロショット）", 50)
+            pipe = chronos.load_pipeline()
+            register(
+                "chronos2",
+                "Chronos-2",
+                "AWS の時系列基盤モデル。数量の系列に、未来に分かる列を添えて渡す。学習しない。",
+                chronos.forecast(split.train, split.val, horizon, prepared.covariates, pipe=pipe),
+                chronos.forecast(labeled, split.future, horizon, prepared.covariates, pipe=pipe),
+                {"checkpoint": chronos.CHECKPOINT, "org": chronos.ORG},
+            )
+            del pipe
+        except Exception as exc:  # noqa: BLE001 - 基盤モデルが落ちても実験は続ける
+            skipped("chronos2", "Chronos-2", chronos.CHECKPOINT, chronos.ORG, exc)
+
+        try:
+            write_status(out_dir, "timesfm", "Google TimesFM 2.5（単変量ゼロショット）", 75)
+            model = timesfm.load_model(max_horizon=max(32, horizon))
+            register(
+                "timesfm",
+                "TimesFM 2.5",
+                "Google の時系列基盤モデル。数量の並びだけを読む。AWS に依存しない対照実験。",
+                timesfm.forecast(split.train, split.val, horizon, model=model),
+                timesfm.forecast(labeled, split.future, horizon, model=model),
+                {"checkpoint": timesfm.CHECKPOINT, "org": timesfm.ORG},
+            )
+            del model
+        except Exception as exc:  # noqa: BLE001 - 同上
+            skipped("timesfm", "TimesFM 2.5", timesfm.CHECKPOINT, timesfm.ORG, exc)
+
+    write_status(out_dir, "blend", "検証 RMSLE の逆数で混合", 90)
+    weights = blending.inverse_rmsle_weights(scores)
+    val_blend = blending.zero_out_dead_series(split.train, blending.blend(val_preds, weights))
+    test_blend = blending.zero_out_dead_series(labeled, blending.blend(test_preds, weights))
+    blend_score = blending.score_against(val_blend, split.val)
+    blend_business = blending.business_against(val_blend, split.val)
+
+    for row in models_meta:
+        if row.get("status") == "ok":
+            row["weight"] = round(weights.get(row["id"], 0.0), 4)
+
+    models_meta.append(
+        {
+            "id": "blend",
+            "title": "混合 + ゼロ系列",
+            "note": "逆RMSLE重み。直近21日がすべて0の系列は0のまま。",
+            "rmsle": round(blend_score, 5),
+            "status": "ok",
+            "weight": 1.0,
+            "weights": {k: round(v, 4) for k, v in weights.items()},
+            "wape": round(blend_business["wape"], 4),
+            "bias": round(blend_business["bias"], 4),
+            "under_rate": round(blend_business["under_rate"], 4),
+            "mae": round(blend_business["mae"], 2),
+        }
+    )
+
+    submission = (
+        test_blend[[ROW_ID, PRED]].rename(columns={ROW_ID: "id", PRED: "sales"}).sort_values("id")
+    )
+    submission.to_csv(out_dir / "submission.csv", index=False)
+
+    result: JsonDict = {
+        "competition": spec.slug,
+        "title": spec.title,
+        "source": prepared.source,
+        "horizon": horizon,
+        "n_series": n_series,
+        "n_train_rows": int(len(labeled)),
+        "train_end": str(labeled[DATE].max().date()),
+        "test_start": str(split.future[DATE].min().date()),
+        "test_end": str(split.future[DATE].max().date()),
+        "metric": "RMSLE",
+        "models": models_meta,
+        "feature_importance": importance[:16],
+        "preview": _preview(split, val_preds, val_blend),
+        "method": list(spec.method),
+        "report": _client_report(prepared, split, models_meta, n_series),
+        "elapsed_sec": round(time.time() - started, 1),
+        "kaggle_ready": prepared.source == "kaggle",
+    }
+    (out_dir / "result.json").write_text(
+        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    write_status(out_dir, "done", "完了", 100)
+    return result
