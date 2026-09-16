@@ -115,6 +115,16 @@ def prepare(root: Path, source: str) -> Prepared:
                 org="custom",
             ),
             CandidateModel(
+                id="recursive_hurdle",
+                title="再帰 LightGBM（売れるか × 売れたらいくら）",
+                note=(
+                    "「その日売れるか」と「売れたらいくらか」を別に学び、掛けて戻す。"
+                    "売れない日が多い売り場で、日ごとの当たり外れを分けて扱う。"
+                ),
+                predict=partial(recursive.fit_predict, intermittent=True, hurdle=True),
+                org="custom",
+            ),
+            CandidateModel(
                 id="direct_horizon_lgbm",
                 title="予測距離別 LightGBM",
                 note=(

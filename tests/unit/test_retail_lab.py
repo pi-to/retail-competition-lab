@@ -860,6 +860,41 @@ def test_recursive_drop_earthquake_does_not_read_future_targets():
     )
 
 
+def test_snap_small_to_zero_only_touches_rows_under_the_threshold():
+    from retail_lab import blending
+
+    pred = pd.DataFrame(
+        {
+            "row_id": [1, 2, 3],
+            "series_id": "1::A",
+            "date": pd.Timestamp("2017-01-01"),
+            "pred": [0.0, 0.2, 1.5],
+        }
+    )
+    snapped = blending.snap_small_to_zero(pred, 0.3)
+
+    assert snapped["pred"].tolist() == [0.0, 0.0, 1.5]
+    assert blending.snap_small_to_zero(pred, 0.0)["pred"].tolist() == [0.0, 0.2, 1.5]
+
+
+def test_choose_blend_reports_the_small_prediction_floor_it_selected():
+    """しきい値は、重みを当てはめていない系列での採点で選ぶ。"""
+    from retail_lab import blending
+
+    panel = _panel(days=60, horizon=4)
+    split = split_panel(panel, 4)
+    preds = {}
+    for name, scale in (("a", 1.0), ("b", 1.1)):
+        frame = split.val[["row_id", "date", "series_id"]].copy()
+        frame["pred"] = scale
+        preds[name] = frame
+    choice = blending.choose_blend(preds, dict(preds), split.train, split.val, split.labeled)
+
+    assert "small_floor" in choice
+    assert choice["small_floor"] >= 0.0
+    assert (choice["val"]["pred"] >= 0).all()
+
+
 def test_intermittent_features_match_between_training_and_recursion():
     """学習側と再帰予測側で、同じ履歴からは同じ特徴が出る。"""
     from retail_lab.competitions.store_sales import recursive
@@ -892,6 +927,104 @@ def test_intermittent_features_count_the_gap_since_the_last_sale():
     assert recursive._days_since_sale_of_history([]) == float(recursive.SALE_GAP_CAP)
     # 予測値がわずかでも売れた扱いにならないよう、しきい値で切る
     assert recursive._days_since_sale_of_history([9.0, 0.2]) == 2.0
+
+
+def test_recursive_hurdle_splits_chance_and_amount_without_reading_the_future():
+    from retail_lab.competitions.store_sales.recursive import fit_predict
+
+    dates = pd.date_range("2017-01-01", periods=140)
+    rows = []
+    row_id = 0
+    for store in (1, 2):
+        for i, date in enumerate(dates):
+            rows.append(
+                {
+                    "row_id": row_id,
+                    "series_id": f"{store}::A",
+                    "date": date,
+                    "target": float((6 + store) if i % 5 == 0 else 0),
+                    "family": "A",
+                    "store_nbr": store,
+                    "type": "A",
+                    "cluster": store,
+                    "onpromotion": 0.0,
+                    "promo_log": 0.0,
+                    "oil": 50.0,
+                    "oil_lag7": 50.0,
+                    "dow": date.weekday(),
+                    "day": date.day,
+                    "month": date.month,
+                    "week": int(date.isocalendar().week),
+                    "is_weekend": int(date.weekday() >= 5),
+                    "is_payday": 0,
+                    "is_national_holiday": 0,
+                    "is_local_holiday": 0,
+                    "is_earthquake": 0,
+                    "transactions_lag16": 100.0,
+                    **EXOG_DEFAULTS,
+                }
+            )
+            row_id += 1
+    panel = pd.DataFrame(rows)
+    train = panel[panel["date"] < dates[-8]]
+    future = panel[panel["date"] >= dates[-8]]
+    changed = future.copy()
+    changed["target"] = 999999.0
+
+    first, _ = fit_predict(
+        train, future, n_estimators=8, context_days=140, intermittent=True, hurdle=True
+    )
+    second, _ = fit_predict(
+        train, changed, n_estimators=8, context_days=140, intermittent=True, hurdle=True
+    )
+
+    assert first.sort_values("row_id")["pred"].tolist() == pytest.approx(
+        second.sort_values("row_id")["pred"].tolist()
+    )
+    assert (first["pred"] >= 0).all()
+
+
+def test_recursive_hurdle_falls_back_when_every_day_sells():
+    """売れない日がない系統では、ふつうの回帰に戻す。"""
+    from retail_lab.competitions.store_sales.recursive import fit_predict
+
+    panel = _panel(days=90, horizon=4)
+    for column, value in {
+        "family": "A",
+        "store_nbr": 1,
+        "type": "A",
+        "cluster": 1,
+        "onpromotion": 0.0,
+        "promo_log": 0.0,
+        "oil": 50.0,
+        "oil_lag7": 50.0,
+        "dow": 1,
+        "day": 1,
+        "month": 1,
+        "week": 1,
+        "is_weekend": 0,
+        "is_payday": 0,
+        "is_national_holiday": 0,
+        "is_local_holiday": 0,
+        "is_earthquake": 0,
+        "transactions_lag16": 100.0,
+        **EXOG_DEFAULTS,
+    }.items():
+        panel[column] = value
+    panel["target"] = panel["target"].abs() + 5.0
+    split = split_panel(panel, 4)
+
+    preds, _ = fit_predict(split.train, split.val, n_estimators=8, context_days=100, hurdle=True)
+
+    assert len(preds) == len(split.val)
+    assert (preds["pred"] >= 0).all()
+
+
+def test_recursive_hurdle_rejects_objectives_it_cannot_combine():
+    from retail_lab.competitions.store_sales.recursive import fit_predict
+
+    with pytest.raises(ValueError):
+        fit_predict(pd.DataFrame(), pd.DataFrame(), objective="tweedie", hurdle=True)
 
 
 def test_recursive_intermittent_does_not_read_future_targets():

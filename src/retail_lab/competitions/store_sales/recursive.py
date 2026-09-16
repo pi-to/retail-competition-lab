@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from lightgbm import LGBMRegressor
+from lightgbm import LGBMClassifier, LGBMRegressor
 
 from retail_lab import DATE, ROW_ID, SERIES_ID, TARGET
 
@@ -173,15 +173,19 @@ def fit_predict(
     intermittent: bool = False,
     learning_rate: float = 0.045,
     num_leaves: int = 31,
+    hurdle: bool = False,
 ) -> tuple[pd.DataFrame, list[dict[str, float | str]]]:
     """ファミリーごとに学習し、未来を日ごとに再帰予測する。
 
     `future[TARGET]` は一切読まない。検証時に答えが同じDataFrame内にあっても漏洩しない。
     `objective="tweedie"` はゼロが多い系統向け。予測は非負のまま出す。
     `intermittent=True` は売れない日の続き方と水準の動きを特徴に足す。
+    `hurdle=True` は「売れるか」と「売れたらいくらか」を別に学び、掛けて戻す。
     """
     if objective not in {"regression", "tweedie"}:
         raise ValueError(f"未対応の objective です: {objective}")
+    if hurdle and objective != "regression":
+        raise ValueError("hurdle は log1p 回帰のときだけ使えます")
     columns = INTERMITTENT_ALL if intermittent else FEATURES
     cutoff = train[DATE].max() - pd.Timedelta(days=context_days)
     recent = train[train[DATE] > cutoff]
@@ -229,7 +233,22 @@ def fit_predict(
             target = np.log1p(family_train[TARGET].clip(lower=0))
 
         model = LGBMRegressor(**params)
-        model.fit(x, target, categorical_feature=CATEGORICALS)
+        gate: LGBMClassifier | None = None
+        if hurdle:
+            sold = (family_train[TARGET] >= SALE_THRESHOLD).to_numpy()
+            if sold.any() and not sold.all():
+                gate = LGBMClassifier(**params)
+                gate.fit(x, sold.astype(int), categorical_feature=CATEGORICALS)
+                # 売れた日だけで「売れたらいくらか」を学ぶ
+                model.fit(
+                    x[sold],
+                    np.log1p(family_train.loc[sold, TARGET].clip(lower=0)),
+                    categorical_feature=CATEGORICALS,
+                )
+            else:
+                model.fit(x, target, categorical_feature=CATEGORICALS)
+        else:
+            model.fit(x, target, categorical_feature=CATEGORICALS)
         for name, gain in zip(columns, model.feature_importances_, strict=True):
             importance[name] += float(gain)
 
@@ -250,7 +269,13 @@ def fit_predict(
             for column in CATEGORICALS:
                 day_x[column] = pd.Categorical(day_x[column], categories=categories[column])
             raw = model.predict(day_x)
-            day["pred"] = np.clip(raw if objective == "tweedie" else np.expm1(raw), 0, None)
+            if gate is not None:
+                # RMSLE が最適になるのは expm1(log1p売上の期待値)。
+                # 売れない日の log1p は0なので、売れる確率をそのまま掛ければよい。
+                chance = gate.predict_proba(day_x)[:, 1]
+                day["pred"] = np.clip(np.expm1(chance * np.clip(raw, 0, None)), 0, None)
+            else:
+                day["pred"] = np.clip(raw if objective == "tweedie" else np.expm1(raw), 0, None)
             for sid, pred in zip(day[SERIES_ID], day["pred"], strict=True):
                 histories.setdefault(str(sid), []).append(float(pred))
             family_predictions.append(day[OUTPUT])

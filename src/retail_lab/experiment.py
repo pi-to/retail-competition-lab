@@ -354,6 +354,7 @@ def run_experiment(
     choice = blending.choose_blend(val_preds, test_preds, split.train, split.val, labeled)
     strategy = str(choice["strategy"])
     zero_window = int(choice["zero_window"])
+    small_floor = float(choice.get("small_floor", 0.0))
     val_blend = choice["val"]
     test_blend = choice["test"]
     weights: dict[str, float] = choice["weights"]
@@ -384,6 +385,7 @@ def run_experiment(
         if zero_window
         else "ゼロ系列の後処理は、検証窓で悪化したので使わない。"
     )
+    floor_note = f"予測が{small_floor:g}未満の行は0にした。" if small_floor else ""
     shrink_note = (
         f"ファミリー別の重みは全体へ{(1 - alpha) * 100:.0f}%寄せた。" if alpha < 1.0 else ""
     )
@@ -391,7 +393,7 @@ def run_experiment(
         {
             "id": "blend",
             "title": "提出する予測",
-            "note": f"{notes[strategy]}{shrink_note}{zero_note}",
+            "note": f"{notes[strategy]}{shrink_note}{zero_note}{floor_note}",
             "rmsle": round(best_score, 5),
             "holdout_rmsle": (
                 round(float(holdout_score), 5) if holdout_score is not None else None
@@ -402,6 +404,7 @@ def run_experiment(
             "weight": 1.0,
             "strategy": strategy,
             "zero_window": zero_window,
+            "small_floor": round(small_floor, 3),
             "weights": {k: round(v, 4) for k, v in weights.items()},
             "weights_by_horizon": (
                 {
@@ -524,6 +527,7 @@ def reblend_cached(prepared: Prepared, out_dir: Path, source_run: Path) -> JsonD
     choice = blending.choose_blend(val_preds, test_preds, split.train, split.val, split.labeled)
     strategy = str(choice["strategy"])
     zero_window = int(choice["zero_window"])
+    small_floor = float(choice.get("small_floor", 0.0))
     val_blend = choice["val"]
     test_blend = choice["test"]
     weights: dict[str, float] = choice["weights"]
@@ -568,6 +572,7 @@ def reblend_cached(prepared: Prepared, out_dir: Path, source_run: Path) -> JsonD
         if zero_window
         else "ゼロ系列の後処理は、検証窓で悪化したので使わない。"
     )
+    floor_note = f"予測が{small_floor:g}未満の行は0にした。" if small_floor else ""
     shrink_note = (
         f"ファミリー別の重みは全体へ{(1 - alpha) * 100:.0f}%寄せた。" if alpha < 1.0 else ""
     )
@@ -575,7 +580,7 @@ def reblend_cached(prepared: Prepared, out_dir: Path, source_run: Path) -> JsonD
         {
             "id": "blend",
             "title": "提出する予測",
-            "note": f"{notes[strategy]}{shrink_note}{zero_note}",
+            "note": f"{notes[strategy]}{shrink_note}{zero_note}{floor_note}",
             "rmsle": round(best_score, 5),
             "holdout_rmsle": (
                 round(float(holdout_score), 5) if holdout_score is not None else None
@@ -586,6 +591,7 @@ def reblend_cached(prepared: Prepared, out_dir: Path, source_run: Path) -> JsonD
             "weight": 1.0,
             "strategy": strategy,
             "zero_window": zero_window,
+            "small_floor": round(small_floor, 3),
             "weights": {k: round(v, 4) for k, v in weights.items()},
             "weights_by_horizon": (
                 {

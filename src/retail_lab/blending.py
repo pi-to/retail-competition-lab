@@ -237,6 +237,18 @@ def _subset(pred_map: dict[str, pd.DataFrame], row_ids: set[Any]) -> dict[str, p
     return {name: frame[frame[ROW_ID].isin(row_ids)] for name, frame in pred_map.items()}
 
 
+def snap_small_to_zero(pred: pd.DataFrame, threshold: float) -> pd.DataFrame:
+    """小さすぎる予測を0にする。売れない日が多い系統では、迷ったら0の方が罰が軽い。
+
+    系列ごとの打ち切り（zero_out_dead_series）とは別物で、こちらは1行ずつ見る。
+    """
+    if threshold <= 0:
+        return pred
+    out = pred.copy()
+    out.loc[out[PRED] < threshold, PRED] = 0.0
+    return out
+
+
 def _fit_plan(
     strategy: str,
     pred_map: dict[str, pd.DataFrame],
@@ -304,6 +316,7 @@ def _two_fold_score(
     alpha: float,
     train: pd.DataFrame,
     window: int,
+    floor: float = 0.0,
 ) -> float:
     """片側で重みを当てはめ、もう片側で採点する。両方向やって平均する。"""
     left, right = halves
@@ -314,7 +327,7 @@ def _two_fold_score(
         plan = _fit_plan(strategy, _subset(pred_map, fit_ids), fit_actual, alpha)
         raw = _apply_plan(plan, _subset(pred_map, hold_ids))
         candidate = zero_out_dead_series(train, raw, window) if window else raw
-        total += score_against(candidate, hold_actual)
+        total += score_against(snap_small_to_zero(candidate, floor), hold_actual)
     return total / 2.0
 
 
@@ -360,6 +373,7 @@ def choose_blend(
     val: pd.DataFrame,
     labeled: pd.DataFrame,
     windows: tuple[int, ...] = (0, 3, 7, 14, 21),
+    floors: tuple[float, ...] = (0.0, 0.05, 0.1, 0.2, 0.3, 0.5, 0.8),
 ) -> dict[str, Any]:
     """使うモデル、混ぜ方、ゼロ窓を選ぶ。
 
@@ -407,26 +421,30 @@ def choose_blend(
     strategy, alpha, window = chosen_key
     used = sorted(val_preds)
     holdout_score: float | None = None
+    floor = 0.0
     if honest_ok:
         used, holdout_score = _drop_models_that_do_not_earn_their_place(
             val_preds, val, halves, strategy, alpha, train, window
         )
+        kept = {name: val_preds[name] for name in used}
         for window_option in windows:
             try:
-                value = _two_fold_score(
-                    {name: val_preds[name] for name in used},
-                    val,
-                    halves,
-                    strategy,
-                    alpha,
-                    train,
-                    window_option,
-                )
+                value = _two_fold_score(kept, val, halves, strategy, alpha, train, window_option)
             except (ValueError, KeyError):
                 continue
             if value < holdout_score - 1e-9:
                 holdout_score = value
                 window = window_option
+        for floor_option in floors:
+            try:
+                value = _two_fold_score(
+                    kept, val, halves, strategy, alpha, train, window, floor_option
+                )
+            except (ValueError, KeyError):
+                continue
+            if value < holdout_score - 1e-9:
+                holdout_score = value
+                floor = floor_option
 
     val_used = {name: val_preds[name] for name in used}
     test_used = {name: test_preds[name] for name in used}
@@ -435,11 +453,14 @@ def choose_blend(
     test_raw = _apply_plan(plan, test_used)
     val_blend = zero_out_dead_series(train, val_raw, window) if window else val_raw
     test_blend = zero_out_dead_series(labeled, test_raw, window) if window else test_raw
+    val_blend = snap_small_to_zero(val_blend, floor)
+    test_blend = snap_small_to_zero(test_blend, floor)
 
     return {
         "strategy": strategy,
         "alpha": alpha,
         "zero_window": window,
+        "small_floor": floor,
         "val": val_blend,
         "test": test_blend,
         "weights": _mean_weights(plan, used),
