@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 
@@ -46,6 +48,20 @@ def fit_log_weights(pred_map: dict[str, pd.DataFrame], actual: pd.DataFrame) -> 
     return {name: float(w) for name, w in zip(names, coefficients, strict=True) if w > 0}
 
 
+def prediction_origin(pred_map: dict[str, pd.DataFrame]) -> pd.Timestamp:
+    """予測の1日目の前日。検証窓と提出窓で日付が違っても、horizon=1 が揃う。"""
+    first = min(pd.to_datetime(frame[DATE]).min() for frame in pred_map.values())
+    return pd.Timestamp(first) - pd.Timedelta(days=1)
+
+
+def _family_of(frame: pd.DataFrame) -> pd.Series:
+    if "family" in frame.columns:
+        return frame["family"].astype(str)
+    if SERIES_ID in frame.columns:
+        return frame[SERIES_ID].astype(str).str.split("::").str[-1]
+    return pd.Series(["all"] * len(frame), index=frame.index)
+
+
 def fit_log_weights_by_horizon(
     pred_map: dict[str, pd.DataFrame], actual: pd.DataFrame, origin: pd.Timestamp
 ) -> dict[int, dict[str, float]]:
@@ -54,11 +70,28 @@ def fit_log_weights_by_horizon(
     truth["horizon"] = (pd.to_datetime(truth[DATE]) - origin).dt.days
     weights: dict[int, dict[str, float]] = {}
     for _step, part in truth.groupby("horizon"):
-        subset = {name: frame[frame[ROW_ID].isin(part[ROW_ID])] for name, frame in pred_map.items()}
         if part.empty:
             continue
+        subset = {name: frame[frame[ROW_ID].isin(part[ROW_ID])] for name, frame in pred_map.items()}
         horizon_key = int(part["horizon"].to_numpy()[0])
         weights[horizon_key] = fit_log_weights(subset, part)
+    return weights
+
+
+def fit_log_weights_by_family(
+    pred_map: dict[str, pd.DataFrame], actual: pd.DataFrame
+) -> dict[str, dict[str, float]]:
+    """商品ファミリーごとに非負最小二乗の重みを当てる。当たり方が系統で違うため。"""
+    truth = actual[[ROW_ID, TARGET]].copy()
+    sample = next(iter(pred_map.values()))
+    families = pd.Series(_family_of(sample).to_numpy(), index=sample[ROW_ID].to_numpy())
+    truth["family"] = truth[ROW_ID].map(families)
+    weights: dict[str, dict[str, float]] = {}
+    for family, part in truth.groupby("family"):
+        if part.empty or pd.isna(family):
+            continue
+        subset = {name: frame[frame[ROW_ID].isin(part[ROW_ID])] for name, frame in pred_map.items()}
+        weights[str(family)] = fit_log_weights(subset, part)
     return weights
 
 
@@ -79,6 +112,106 @@ def blend_by_horizon(
     if not pieces:
         raise ValueError("日ごとの混合を作れる行がありません")
     return pd.concat(pieces, ignore_index=True)
+
+
+def blend_by_family(
+    pred_map: dict[str, pd.DataFrame],
+    weights_by_family: dict[str, dict[str, float]],
+) -> pd.DataFrame:
+    """ファミリーごとの重みで混ぜる。"""
+    pieces: list[pd.DataFrame] = []
+    sample = next(iter(pred_map.values())).copy()
+    sample["_family"] = _family_of(sample)
+    for family, weights in weights_by_family.items():
+        row_ids = sample.loc[sample["_family"] == family, ROW_ID]
+        subset = {name: frame[frame[ROW_ID].isin(row_ids)] for name, frame in pred_map.items()}
+        if not row_ids.empty:
+            pieces.append(blend(subset, weights))
+    if not pieces:
+        raise ValueError("ファミリーごとの混合を作れる行がありません")
+    return pd.concat(pieces, ignore_index=True)
+
+
+def choose_blend(
+    val_preds: dict[str, pd.DataFrame],
+    test_preds: dict[str, pd.DataFrame],
+    train: pd.DataFrame,
+    val: pd.DataFrame,
+    labeled: pd.DataFrame,
+    windows: tuple[int, ...] = (0, 3, 7, 14, 21),
+) -> dict[str, Any]:
+    """検証窓で混ぜ方とゼロ窓を選ぶ。日別重みも候補に入れる。"""
+    scores = {name: score_against(frame, val) for name, frame in val_preds.items()}
+    best_single = min(scores, key=lambda name: scores[name])
+    origin_val = prediction_origin(val_preds)
+    origin_test = prediction_origin(test_preds)
+    horizon_weights = fit_log_weights_by_horizon(val_preds, val, origin_val)
+    family_weights = fit_log_weights_by_family(val_preds, val)
+    mean_horizon = {
+        name: float(np.mean([part.get(name, 0.0) for part in horizon_weights.values()] or [0.0]))
+        for name in val_preds
+    }
+    mean_family = {
+        name: float(np.mean([part.get(name, 0.0) for part in family_weights.values()] or [0.0]))
+        for name in val_preds
+    }
+    options: dict[str, tuple[pd.DataFrame, pd.DataFrame, dict[str, float]]] = {
+        "rule": (
+            blend(val_preds, inverse_rmsle_weights(scores)),
+            blend(test_preds, inverse_rmsle_weights(scores)),
+            inverse_rmsle_weights(scores),
+        ),
+        "fitted": (
+            blend(val_preds, fit_log_weights(val_preds, val)),
+            blend(test_preds, fit_log_weights(val_preds, val)),
+            fit_log_weights(val_preds, val),
+        ),
+        "single": (
+            blend(val_preds, {best_single: 1.0}),
+            blend(test_preds, {best_single: 1.0}),
+            {best_single: 1.0},
+        ),
+        "fitted_horizon": (
+            blend_by_horizon(val_preds, horizon_weights, origin_val),
+            blend_by_horizon(test_preds, horizon_weights, origin_test),
+            mean_horizon,
+        ),
+        "fitted_family": (
+            blend_by_family(val_preds, family_weights),
+            blend_by_family(test_preds, family_weights),
+            mean_family,
+        ),
+    }
+
+    best_score = float("inf")
+    chosen: dict[str, Any] | None = None
+    per_strategy: dict[str, float] = {}
+    for name, (val_raw, test_raw, weights) in options.items():
+        for window in windows:
+            val_candidate = zero_out_dead_series(train, val_raw, window) if window else val_raw
+            score = score_against(val_candidate, val)
+            per_strategy[name] = min(per_strategy.get(name, float("inf")), score)
+            if score < best_score:
+                best_score = score
+                test_candidate = (
+                    zero_out_dead_series(labeled, test_raw, window) if window else test_raw
+                )
+                chosen = {
+                    "strategy": name,
+                    "zero_window": window,
+                    "val": val_candidate,
+                    "test": test_candidate,
+                    "weights": weights,
+                    "weights_by_horizon": horizon_weights if name == "fitted_horizon" else None,
+                    "weights_by_family": family_weights if name == "fitted_family" else None,
+                    "best_single": best_single,
+                }
+    if chosen is None:
+        raise ValueError("混合候補がありません")
+    chosen["score"] = best_score
+    chosen["candidates"] = per_strategy
+    chosen["model_scores"] = scores
+    return chosen
 
 
 def blend(

@@ -16,10 +16,22 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   STORE_SALES_EXPERIMENTS,
+  SUBMIT_LABEL,
+  experimentsByScore,
+  submitRecommendation,
   type ExperimentInsight,
+  type SubmitAction,
 } from "@/lib/competitions/store-sales-experiments";
 
 type Run = {
@@ -35,6 +47,13 @@ export type RunHistory = { runs: Run[]; tags: Record<string, string> };
 
 const COLORS = { 採用: "#2563eb", 改善: "#16a34a", 不採用: "#a1a1aa" };
 
+const ACTION_VARIANT: Record<SubmitAction, "default" | "secondary" | "outline" | "destructive"> = {
+  submit_now: "default",
+  already_submitted: "secondary",
+  do_not_submit: "outline",
+  superseded: "outline",
+};
+
 export function ExperimentHistory({
   competition,
   initial,
@@ -42,9 +61,13 @@ export function ExperimentHistory({
   competition: string;
   initial: RunHistory;
 }) {
+  const rec = submitRecommendation();
+  const ranked = experimentsByScore();
+  const [selected, setSelected] = useState<string>(rec.experiment.id);
   const [history, setHistory] = useState(initial);
   const [pending, setPending] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const insight = ranked.find((item) => item.id === selected) ?? rec.experiment;
   const chart = STORE_SALES_EXPERIMENTS.map((item) => ({
     name: short(item.title),
     local: item.localRmsle,
@@ -83,6 +106,80 @@ export function ExperimentHistory({
       </TabsList>
 
       <TabsContent value="insights" className="mt-3 flex flex-col gap-3">
+        <Alert>
+          <AlertTitle>{rec.headline}</AlertTitle>
+          <AlertDescription className="flex flex-col gap-1">
+            <span>{rec.whyThis}</span>
+            <span>{rec.doNotSubmit}</span>
+            {rec.experiment.runId ? (
+              <span className="font-mono text-xs">Run ID: {rec.experiment.runId}</span>
+            ) : null}
+          </AlertDescription>
+        </Alert>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>実験履歴</CardTitle>
+            <CardDescription>
+              ローカルRMSLEが低い順。提出列が空欄に見える行は出さない。行をクリックすると下に理由が出る。
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>提出</TableHead>
+                    <TableHead className="text-right">ローカル</TableHead>
+                    <TableHead className="text-right">公開LB</TableHead>
+                    <TableHead>実験</TableHead>
+                    <TableHead>判定</TableHead>
+                    <TableHead>タグ</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {ranked.map((item) => {
+                    const isSubmit = item.submitAction === "submit_now";
+                    return (
+                      <TableRow
+                        key={item.id}
+                        data-state={item.id === selected ? "selected" : undefined}
+                        className={isSubmit ? "bg-primary/5" : undefined}
+                        onClick={() => setSelected(item.id)}
+                      >
+                        <TableCell>
+                          <Badge variant={ACTION_VARIANT[item.submitAction]}>
+                            {SUBMIT_LABEL[item.submitAction]}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-medium">
+                          {item.localRmsle.toFixed(5)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-muted-foreground">
+                          {item.leaderboard != null ? item.leaderboard.toFixed(5) : "—"}
+                        </TableCell>
+                        <TableCell className="max-w-56 whitespace-normal font-medium">
+                          {item.title}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={item.outcome === "不採用" ? "outline" : "secondary"}>
+                            {item.outcome}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">
+                          {item.tag}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
+
+        <InsightDetail insight={insight} />
+
         <Card>
           <CardHeader>
             <CardTitle>試行ごとのローカルRMSLE</CardTitle>
@@ -106,11 +203,6 @@ export function ExperimentHistory({
             </ResponsiveContainer>
           </CardContent>
         </Card>
-        <div className="grid gap-3 md:grid-cols-2">
-          {STORE_SALES_EXPERIMENTS.map((item) => (
-            <InsightCard key={item.id} insight={item} />
-          ))}
-        </div>
       </TabsContent>
 
       <TabsContent value="runs" className="mt-3 flex flex-col gap-3">
@@ -118,54 +210,98 @@ export function ExperimentHistory({
           <AlertTitle>タグで安全に戻せます</AlertTitle>
           <AlertDescription>
             Championだけが現在の result.json / submission.csv です。失敗Runも不変のまま残ります。
-            「戻す」はコードを変えず、選んだRunの成果物を復元します。
+            「戻す」はコードを変えず、選んだRunの成果物を復元します。Kaggleへ出すのは Champion のCSV。
           </AlertDescription>
         </Alert>
         {message ? <p className="text-sm text-muted-foreground">{message}</p> : null}
-        {history.runs.map((run) => {
-          const tags = Object.entries(history.tags)
-            .filter(([, id]) => id === run.run_id)
-            .map(([tag]) => tag);
-          return (
-            <Card key={run.run_id} size="sm">
-              <CardHeader>
-                <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
-                  {run.label}
-                  {tags.map((tag) => (
-                    <Badge key={tag} variant={tag === "champion" ? "default" : "outline"}>
-                      {tag}
-                    </Badge>
-                  ))}
-                </CardTitle>
-                <CardDescription className="font-mono text-xs">{run.run_id}</CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-sm">
-                  local <span className="font-mono">{run.local_rmsle.toFixed(5)}</span>
-                  {run.leaderboard !== null ? (
-                    <>
-                      {" "}/ LB <span className="font-mono">{run.leaderboard.toFixed(5)}</span>
-                    </>
-                  ) : null}
-                </p>
-                {pending === run.run_id ? (
-                  <div className="flex gap-2">
-                    <Button size="sm" onClick={() => void promote(run.run_id)}>
-                      このRunへ戻す
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => setPending(null)}>
-                      やめる
-                    </Button>
-                  </div>
-                ) : (
-                  <Button size="sm" variant="outline" onClick={() => setPending(run.run_id)}>
-                    戻す内容を確認
-                  </Button>
-                )}
-              </CardContent>
-            </Card>
-          );
-        })}
+        <Card>
+          <CardContent>
+            {history.runs.length === 0 ? (
+              <p className="py-4 text-sm text-muted-foreground">
+                この環境にアーカイブされたRunはありません。提出判断は上の実験履歴表を見てください。
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>提出CSV</TableHead>
+                      <TableHead className="text-right">ローカル</TableHead>
+                      <TableHead className="text-right">公開LB</TableHead>
+                      <TableHead>ラベル</TableHead>
+                      <TableHead>Run ID</TableHead>
+                      <TableHead></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {history.runs.map((run) => {
+                      const tags = Object.entries(history.tags)
+                        .filter(([, id]) => id === run.run_id)
+                        .map(([tag]) => tag);
+                      const isChampion = tags.includes("champion");
+                      return (
+                        <TableRow
+                          key={run.run_id}
+                          className={isChampion ? "bg-primary/5" : undefined}
+                        >
+                          <TableCell>
+                            {isChampion ? (
+                              <Badge>いまの提出CSV</Badge>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right font-mono">
+                            {run.local_rmsle.toFixed(5)}
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-muted-foreground">
+                            {run.leaderboard !== null ? run.leaderboard.toFixed(5) : "—"}
+                          </TableCell>
+                          <TableCell className="max-w-48 whitespace-normal">
+                            <div className="flex flex-wrap items-center gap-1">
+                              <span>{run.label}</span>
+                              {tags
+                                .filter((tag) => tag !== "champion")
+                                .map((tag) => (
+                                  <Badge key={tag} variant="outline">
+                                    {tag}
+                                  </Badge>
+                                ))}
+                            </div>
+                          </TableCell>
+                          <TableCell className="font-mono text-xs text-muted-foreground">
+                            {run.run_id}
+                          </TableCell>
+                          <TableCell>
+                            {pending === run.run_id ? (
+                              <div className="flex gap-2">
+                                <Button size="sm" onClick={() => void promote(run.run_id)}>
+                                  このRunへ戻す
+                                </Button>
+                                <Button size="sm" variant="outline" onClick={() => setPending(null)}>
+                                  やめる
+                                </Button>
+                              </div>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={isChampion}
+                                onClick={() => setPending(run.run_id)}
+                              >
+                                戻す内容を確認
+                              </Button>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </TabsContent>
 
       <TabsContent value="article" className="mt-3">
@@ -191,12 +327,15 @@ export function ExperimentHistory({
   );
 }
 
-function InsightCard({ insight }: { insight: ExperimentInsight }) {
+function InsightDetail({ insight }: { insight: ExperimentInsight }) {
   return (
     <Card size="sm">
       <CardHeader>
         <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
           {insight.title}
+          <Badge variant={ACTION_VARIANT[insight.submitAction]}>
+            {SUBMIT_LABEL[insight.submitAction]}
+          </Badge>
           <Badge variant={insight.outcome === "採用" ? "default" : "outline"}>
             {insight.outcome}
           </Badge>
@@ -204,14 +343,27 @@ function InsightCard({ insight }: { insight: ExperimentInsight }) {
         </CardTitle>
         <CardDescription>
           local {insight.localRmsle.toFixed(5)}
-          {insight.leaderboard ? ` / LB ${insight.leaderboard.toFixed(5)}` : ""}
+          {insight.leaderboard ? ` / LB ${insight.leaderboard.toFixed(5)}` : " / LB 未提出"}
+          {insight.runId ? ` / ${insight.runId}` : ""}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2 text-sm text-muted-foreground">
-        <p><span className="font-medium text-foreground">試した：</span>{insight.tried}</p>
-        <p><span className="font-medium text-foreground">結果：</span>{insight.result}</p>
-        <p><span className="font-medium text-foreground">原因仮説：</span>{insight.why}</p>
-        <p><span className="font-medium text-foreground">学び：</span>{insight.learned}</p>
+        <p>
+          <span className="font-medium text-foreground">試した：</span>
+          {insight.tried}
+        </p>
+        <p>
+          <span className="font-medium text-foreground">結果：</span>
+          {insight.result}
+        </p>
+        <p>
+          <span className="font-medium text-foreground">原因仮説：</span>
+          {insight.why}
+        </p>
+        <p>
+          <span className="font-medium text-foreground">学び：</span>
+          {insight.learned}
+        </p>
       </CardContent>
     </Card>
   );

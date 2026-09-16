@@ -37,6 +37,8 @@ import type { Result, ResultPayload, RunError, Status } from "@/lib/types";
 const STRATEGY_LABEL: Record<string, string> = {
   rule: "逆RMSLE重み",
   fitted: "検証で当てた重み",
+  fitted_horizon: "予測日ごとの重み",
+  fitted_family: "商品ファミリーごとの重み",
   single: "単体そのまま",
 };
 

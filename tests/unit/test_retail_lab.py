@@ -139,6 +139,82 @@ def test_horizon_blend_picks_the_model_that_matches_each_day():
     assert blended.sort_values("row_id")["pred"].tolist() == pytest.approx([10.0, 20.0, 30.0, 40.0])
 
 
+def test_choose_blend_prefers_horizon_weights_when_they_win():
+    truth = pd.DataFrame(
+        {
+            "row_id": [1, 2, 3, 4],
+            "date": pd.to_datetime(["2017-08-16", "2017-08-16", "2017-08-17", "2017-08-17"]),
+            "target": [10.0, 20.0, 30.0, 40.0],
+        }
+    )
+    preds = {
+        "early": pd.DataFrame(
+            {
+                "row_id": [1, 2, 3, 4],
+                "date": truth["date"],
+                "pred": [10.0, 20.0, 1.0, 1.0],
+            }
+        ),
+        "late": pd.DataFrame(
+            {
+                "row_id": [1, 2, 3, 4],
+                "date": truth["date"],
+                "pred": [1.0, 1.0, 30.0, 40.0],
+            }
+        ),
+    }
+    train = pd.DataFrame({"date": pd.to_datetime(["2017-08-15"])})
+    choice = blending.choose_blend(preds, preds, train, truth, truth)
+    assert choice["strategy"] == "fitted_horizon"
+    assert choice["score"] < blending.score_against(
+        blending.blend(preds, blending.fit_log_weights(preds, truth)), truth
+    )
+
+
+def test_choose_blend_prefers_family_weights_when_they_win():
+    """Aが当たる系統とBが当たる系統を、ファミリーごとに選べる。"""
+    truth = pd.DataFrame(
+        {
+            "row_id": [1, 2, 3, 4],
+            "date": pd.to_datetime(["2017-08-16"] * 4),
+            "target": [10.0, 20.0, 30.0, 40.0],
+        }
+    )
+    preds = {
+        "a": pd.DataFrame(
+            {
+                "row_id": [1, 2, 3, 4],
+                "date": truth["date"],
+                "series_id": ["1::HARD", "1::HARD", "2::EASY", "2::EASY"],
+                "pred": [10.0, 20.0, 1.0, 1.0],
+            }
+        ),
+        "b": pd.DataFrame(
+            {
+                "row_id": [1, 2, 3, 4],
+                "date": truth["date"],
+                "series_id": ["1::HARD", "1::HARD", "2::EASY", "2::EASY"],
+                "pred": [1.0, 1.0, 30.0, 40.0],
+            }
+        ),
+    }
+    train = pd.DataFrame({"date": pd.to_datetime(["2017-08-15"])})
+    choice = blending.choose_blend(preds, preds, train, truth, truth)
+    assert choice["strategy"] == "fitted_family"
+    assert choice["score"] < blending.score_against(
+        blending.blend(preds, blending.fit_log_weights(preds, truth)), truth
+    )
+
+
+def test_prediction_origin_is_the_day_before_the_first_forecast():
+    preds = {
+        "m": pd.DataFrame(
+            {"date": pd.to_datetime(["2017-08-16", "2017-08-17"]), "row_id": [1, 2], "pred": [1, 1]}
+        )
+    }
+    assert blending.prediction_origin(preds) == pd.Timestamp("2017-08-15")
+
+
 def test_inverse_rmsle_weights_favor_the_better_model():
     weights = blending.inverse_rmsle_weights({"good": 0.2, "bad": 0.4})
     assert weights["good"] > weights["bad"]

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from retail_lab import kaggle, registry, tracking
 from retail_lab.competition import data_dir, output_dir, run_output_dir
-from retail_lab.experiment import run_experiment
+from retail_lab.experiment import reblend_cached, run_experiment
 from retail_lab.status import write_status
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -34,7 +34,10 @@ def _parser() -> argparse.ArgumentParser:
         help="指定Runの Chronos / TimesFM 予測を再利用する（タグまたは Run ID）",
     )
 
-    sub.add_parser("fetch", help="Kaggle から公式データを取得する")
+    reblend_cmd = sub.add_parser("reblend", help="保存済み予測の混ぜ方だけをやり直す")
+    reblend_cmd.add_argument("--from-run", default="champion")
+    reblend_cmd.add_argument("--label", default="reblend")
+    reblend_cmd.add_argument("--out", type=Path, default=None)
     sub.add_parser("status", help="データの取得状況を見る")
     submit_cmd = sub.add_parser("submit", help="生成済みの submission.csv を Kaggle に提出する")
     submit_cmd.add_argument(
@@ -85,6 +88,34 @@ def main(argv: list[str] | None = None) -> int:
                 tracking.set_leaderboard(out_root, args.ref, args.score),
                 ensure_ascii=False,
                 indent=2,
+            )
+        )
+        return 0
+
+    if args.command == "reblend":
+        out = args.out or out_root
+        source_id = tracking.resolve(out_root, args.from_run)
+        source_run = out_root / "runs" / source_id
+        write_status(out, "load", "保存済み予測を読みます", 10)
+        try:
+            prepared = registry.get(spec.slug).prepare(root, "kaggle")
+            result = reblend_cached(prepared, out, source_run)
+            run_id = tracking.new_run_id(args.label)
+            result["run_id"] = run_id
+            result["method_version"] = args.label
+            (out / "result.json").write_text(
+                json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            tracking.archive_run(out, run_id, args.label)
+            tracking.consider_champion(out, run_id)
+        except Exception as exc:  # noqa: BLE001
+            _fail(out, f"{type(exc).__name__}: {exc}", "")
+            traceback.print_exc()
+            return 1
+        print(
+            json.dumps(
+                {"run_id": result["run_id"], "rmsle": result["models"][-1]["rmsle"]},
+                ensure_ascii=False,
             )
         )
         return 0

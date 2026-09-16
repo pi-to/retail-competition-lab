@@ -1,3 +1,9 @@
+export type SubmitAction =
+  | "submit_now"
+  | "already_submitted"
+  | "do_not_submit"
+  | "superseded";
+
 export type ExperimentInsight = {
   id: string;
   tag: string;
@@ -5,15 +11,25 @@ export type ExperimentInsight = {
   localRmsle: number;
   leaderboard?: number;
   outcome: "採用" | "不採用" | "改善";
+  submitAction: SubmitAction;
+  runId?: string;
   tried: string;
   result: string;
   why: string;
   learned: string;
 };
 
+export const SUBMIT_LABEL: Record<SubmitAction, string> = {
+  submit_now: "次に提出する",
+  already_submitted: "提出済み",
+  do_not_submit: "出さない",
+  superseded: "負けたので保留",
+};
+
 /**
  * 数字だけでは残らない体験を記録する。
  * 「なぜそう思うか」は事実と仮説を混同しないよう、仮説なら明記する。
+ * 提出判断は1行だけ `submit_now`。公開LBがある行は `already_submitted`。
  */
 export const STORE_SALES_EXPERIMENTS: ExperimentInsight[] = [
   {
@@ -22,6 +38,7 @@ export const STORE_SALES_EXPERIMENTS: ExperimentInsight[] = [
     title: "同じ曜日の直近をそのまま出す",
     localRmsle: 0.61704,
     outcome: "不採用",
+    submitAction: "do_not_submit",
     tried: "各店舗×商品ファミリーについて、同じ曜日の最後の売上を予測値にした。",
     result: "RMSLE 0.6170。高度なモデルが本当に必要かを判断する下限にはなった。",
     why: "曜日の周期は拾える一方、プロモーション、給料日、祝日、取扱終了を区別できないためと考える。",
@@ -33,6 +50,7 @@ export const STORE_SALES_EXPERIMENTS: ExperimentInsight[] = [
     title: "16日先を一括でLightGBM予測",
     localRmsle: 0.43653,
     outcome: "不採用",
+    submitAction: "do_not_submit",
     tried: "ラグ16日以上、移動平均、プロモ、祝日、原油、店舗属性を1つのLightGBMで横断学習した。",
     result: "RMSLE 0.4365。ナイーブより大幅に良いが、Chronos-2には届かなかった。",
     why: "未来漏洩を避けるため直近1・7・14日の売上を使えず、強い週次パターンを捨てた影響が大きいと推測する。",
@@ -44,6 +62,7 @@ export const STORE_SALES_EXPERIMENTS: ExperimentInsight[] = [
     title: "Google TimesFM 2.5をゼロショット利用",
     localRmsle: 0.46438,
     outcome: "不採用",
+    submitAction: "do_not_submit",
     tried: "各系列の直近512日だけをTimesFMへ渡し、学習なしで16日を予測した。",
     result: "RMSLE 0.4644。LightGBMとChronos-2の両方に負け、最終混合の重みは0になった。",
     why: "この実装では売上系列しか渡しておらず、プロモーションや祝日の予定を見られないことが弱点と考える。",
@@ -55,6 +74,7 @@ export const STORE_SALES_EXPERIMENTS: ExperimentInsight[] = [
     title: "Chronos-2へ全期間を渡す",
     localRmsle: 0.4136,
     outcome: "不採用",
+    submitAction: "do_not_submit",
     tried: "Chronos-2へ利用可能な長い履歴をそのまま渡した。",
     result: "RMSLE 0.4136。推論にも約17分かかった。",
     why: "2013年の古い需要構造や地震など、現在と異なる局面まで参照して直近のパターンが薄まった可能性がある。",
@@ -66,6 +86,7 @@ export const STORE_SALES_EXPERIMENTS: ExperimentInsight[] = [
     title: "RMSLEの逆数で単純に混ぜる",
     localRmsle: 0.42822,
     outcome: "不採用",
+    submitAction: "do_not_submit",
     tried: "各モデルの1/RMSLEを重みにして予測を平均した。",
     result: "RMSLE 0.4282。Chronos-2単体の0.4048より悪化した。",
     why: "相対順位しか見ない規則なので、弱いモデルにも必ず正の重みが付き、Chronos-2の良い予測を薄めた。",
@@ -77,6 +98,7 @@ export const STORE_SALES_EXPERIMENTS: ExperimentInsight[] = [
     title: "直近21日ゼロの系列を強制的に0にする",
     localRmsle: 0.41187,
     outcome: "不採用",
+    submitAction: "do_not_submit",
     tried: "直近21日の売上合計が0なら、取扱終了とみなして予測を0へ置換した。",
     result: "Chronos-2単体0.4048から0.4119へ悪化した。",
     why: "一時的に売れていないだけの系列まで取扱終了と誤認し、その後の実売を0と予測したためと考える。",
@@ -84,14 +106,15 @@ export const STORE_SALES_EXPERIMENTS: ExperimentInsight[] = [
   },
   {
     id: "recursive-lgbm-v1",
-    tag: "previous-champion",
+    tag: "superseded",
     title: "商品ファミリー別の再帰LightGBMを追加",
     localRmsle: 0.3902,
     outcome: "改善",
+    submitAction: "superseded",
     tried: "33商品ファミリーごとにLightGBMを学習し、予測を1日ずつ履歴へ戻して1・7・14日前のラグを安全に使った。",
-    result: "再帰モデル単体0.3966。Chronos-2 37%、再帰LightGBM 58%、一括LightGBM 5%の混合で0.3902。旧Championを0.0098改善した。",
+    result: "再帰モデル単体0.3966。Chronos-2 37%、再帰LightGBM 58%、一括LightGBM 5%の混合で0.3902。当時のChampionを0.0098改善した。",
     why: "このデータの強い7日周期を、一括予測では捨てていた。再帰により直近週の形を使えたことが改善要因と考える。",
-    learned: "公開解法で大きかった改善が自分の検証でも再現した。次は公開LBで再現性を確認し、ファミリー別のハイパーパラメータを調整する。",
+    learned: "公開解法で大きかった改善が自分の検証でも再現した。その後、木数と外生変数でさらに下がったため提出対象からは外す。",
   },
   {
     id: "recursive-trees-320",
@@ -99,10 +122,11 @@ export const STORE_SALES_EXPERIMENTS: ExperimentInsight[] = [
     title: "再帰LightGBMの木を320本にする",
     localRmsle: 0.39584,
     outcome: "改善",
+    submitAction: "superseded",
     tried: "同じ末尾16日検証で、木の本数と学習期間だけを変えた。",
     result: "320本・730日で単体0.39584。140本は0.39884、365日は0.40232、1095日は0.40030。",
     why: "木を増やすと週次ラグを細かく拾える一方、古い履歴を足すと地震や古い需要が混ざる、という仮説。",
-    learned: "Chronos-2と同じく、長い履歴は自動では良くならない。採用は混合後の数字で決める。",
+    learned: "Chronos-2と同じく、長い履歴は自動では良くならない。採用は混合後の数字で決める。単体では出さない。",
   },
   {
     id: "direct-horizon-lgbm",
@@ -110,32 +134,49 @@ export const STORE_SALES_EXPERIMENTS: ExperimentInsight[] = [
     title: "予測距離に応じた直近ラグで一括予測する",
     localRmsle: 0.41756,
     outcome: "不採用",
+    submitAction: "do_not_submit",
     tried: "h日先の予測にはh日以上前の売上だけを使い、予測を履歴へ戻さず16日を一括で出した。",
     result: "単体RMSLE 0.41756。再帰0.39584より悪い。",
     why: "誤差の連鎖は避けられるが、lag_1を毎日同じ形で使えない損失の方が大きかったと考える。",
-    learned: "漏洩しない近いラグでも、再帰のフィードバックを完全に捨てると週次の形が弱くなる。混合候補としては残す。",
+    learned: "漏洩しない近いラグでも、再帰のフィードバックを完全に捨てると週次の形が弱くなる。混合候補としては残す。単体では出さない。",
   },
   {
     id: "recursive320-direct-horizon-v1",
-    tag: "previous-champion",
+    tag: "superseded",
     title: "320本の再帰と予測距離別モデルを混ぜる",
     localRmsle: 0.38893,
     outcome: "改善",
+    submitAction: "superseded",
     tried: "再帰LightGBMを320本にし、予測距離別LightGBMを混合候補へ足した。Chronos-2とTimesFMは同じ検証窓のまま。",
     result: "混合RMSLE 0.38893。重みは再帰53%、Chronos-2 33%、距離別13%。一括LightGBMとTimesFMは0。提出CSVはヘッダ+28512行。",
     why: "距離別モデルは単体では再帰に負けるが、誤差の連鎖がない日の予測がChronos-2や再帰と補い合ったため、検証の非負最小二乗が正の重みを付けたと考える。",
-    learned: "単体で負けても、違う外れ方なら混ぜて良くなる。公開LBは未記録なので、参加できるアカウントで次に提出する。",
+    learned: "単体で負けても、違う外れ方なら混ぜて良くなる。祝日・プロモと地震除外でさらに下がったので、このCSVは出さない。",
   },
   {
     id: "exog-holiday-promo-v1",
-    tag: "champion / latest",
+    tag: "previous-champion",
     title: "地域祝日・前夜・プロモ先行を足す",
     localRmsle: 0.3859,
     outcome: "改善",
+    submitAction: "superseded",
+    runId: "20260916-110352-exog-holiday-promo-v1-44e366",
     tried: "地域祝日、祝日前夜、祝日までの日数、プロモの1・7日前と1・7日後を特徴に足し、Chronos-2へ地元・地域・前夜も渡した。売上ラグは増やしていない。",
     result: "混合RMSLE 0.3859。再帰0.39267、一括LightGBM 0.41844、距離別0.41342、Chronos-2 0.40401。重みは再帰51%、Chronos-2 30%、一括11%、距離別8%。",
     why: "検証窓と提出窓の両方に祝日があり、プロモは提出CSVに未来分が載っている。既知の外生変数を捨てていたのがボトルネックだったと考える。",
-    learned: "未来漏洩にならない情報は先に使い切る。次は地震期間を学習から外す対照と、公開LBでの確認。",
+    learned: "未来漏洩にならない情報は先に使い切る。地震期間除外で 0.00006 だけ勝ったので、こちらはロールバック用に残す。",
+  },
+  {
+    id: "exog-no-eq-v1",
+    tag: "champion / latest",
+    title: "地震期間を学習から外して混ぜる",
+    localRmsle: 0.38584,
+    outcome: "改善",
+    submitAction: "submit_now",
+    runId: "20260916-111927-exog-no-eq-v1-bc157d",
+    tried: "祝日・プロモ特徴はそのまま、再帰LightGBMの学習だけ 2016-04-16〜05-31 を外した（検証・提出の予測対象は変えていない）。",
+    result: "混合RMSLE 0.38584。no_eq 単体は 0.3941 だが混合で 11% の重み。Champion CSV はこのRun。公開LBは未記録。",
+    why: "地震直後の特需は通常の16日予測と形が違う、という仮説。単体は悪化しても、他モデルと外れ方が違うため混ぜるとわずかに下がった。",
+    learned: "学習から外す対照は『単体が良くなるか』ではなく『混合が良くなるか』で決める。次にKaggleへ出すのはこの1本。",
   },
   {
     id: "foundation-blend-v1",
@@ -144,9 +185,47 @@ export const STORE_SALES_EXPERIMENTS: ExperimentInsight[] = [
     localRmsle: 0.40002,
     leaderboard: 0.39515,
     outcome: "採用",
+    submitAction: "already_submitted",
     tried: "Chronos-2を直近540日に絞り、LightGBMとlog空間の非負最小二乗で混ぜた。",
     result: "ローカル0.4000、公開LB 0.39515。差は0.005で、ローカル検証が本番をよく再現した。",
     why: "Chronos-2が系列形状と未来共変量を捉え、LightGBMが店舗・商品カテゴリの横断効果を補ったと考える。",
-    learned: "末尾16日の時系列検証を改善判断に使える。これを壊さず、再帰モデルを次の候補として加える。",
+    learned: "末尾16日の時系列検証を改善判断に使える。公開LBがあるのはこの行だけ。次の提出はこれより良いChampionにする。",
   },
 ];
+
+export type SubmitRecommendation = {
+  experiment: ExperimentInsight;
+  headline: string;
+  whyThis: string;
+  doNotSubmit: string;
+};
+
+export function pickSubmitCandidate(
+  experiments: ExperimentInsight[] = STORE_SALES_EXPERIMENTS
+): ExperimentInsight {
+  const marked = experiments.find((item) => item.submitAction === "submit_now");
+  if (marked) return marked;
+  return [...experiments].sort((a, b) => a.localRmsle - b.localRmsle)[0];
+}
+
+export function submitRecommendation(
+  experiments: ExperimentInsight[] = STORE_SALES_EXPERIMENTS
+): SubmitRecommendation {
+  const experiment = pickSubmitCandidate(experiments);
+  const submitted = experiments.find((item) => item.submitAction === "already_submitted");
+  return {
+    experiment,
+    headline: `提出するのは「${experiment.title}」（ローカル ${experiment.localRmsle.toFixed(5)}）`,
+    whyThis:
+      "ChampionタグのRun。同じ末尾16日検証でいちばん低く、提出CSV（ヘッダ+28,512行）もこの成果物。公開LBは未記録なので、次にKaggleへ出すならこれ1本。",
+    doNotSubmit: submitted
+      ? `公開LB ${submitted.leaderboard?.toFixed(5)} の「${submitted.title}」は提出済みの古い混合（ローカル ${submitted.localRmsle.toFixed(5)}）。同じCSVを出し直さない。灰色の「出さない」は単体・失敗実験。`
+      : "失敗実験と単体スコアは出さない。混ぜたChampionだけ出す。",
+  };
+}
+
+export function experimentsByScore(
+  experiments: ExperimentInsight[] = STORE_SALES_EXPERIMENTS
+): ExperimentInsight[] {
+  return [...experiments].sort((a, b) => a.localRmsle - b.localRmsle);
+}

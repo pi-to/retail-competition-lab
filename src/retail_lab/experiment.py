@@ -12,7 +12,6 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
 from retail_lab import DATE, ROW_ID, SERIES_ID, TARGET, blending
@@ -342,71 +341,17 @@ def run_experiment(
             skipped("timesfm", "TimesFM 2.5", timesfm.CHECKPOINT, timesfm.ORG, exc)
 
     write_status(out_dir, "blend", "混ぜ方とゼロ系列の窓を検証窓で選ぶ", 90)
-    best_single = min(scores, key=lambda k: scores[k])
-    weight_options: dict[str, dict[str, float]] = {
-        "rule": blending.inverse_rmsle_weights(scores),
-        "fitted": blending.fit_log_weights(val_preds, split.val),
-        # 単体は重み1のひとつ。混ぜて悪化するならこれが選ばれる
-        "single": {best_single: 1.0},
-    }
-    # 0 は「後処理をしない」。窓を長く取り過ぎると、まだ売れている系列まで0にしてしまう
-    windows = (0, 3, 7, 14, 21)
-
-    origin_val = split.train[DATE].max()
-    origin_test = labeled[DATE].max()
-    horizon_weights = blending.fit_log_weights_by_horizon(val_preds, split.val, origin_val)
-
-    chosen: tuple[str, int] | None = None
-    best_score = float("inf")
-    best_frames: tuple[pd.DataFrame, pd.DataFrame] | None = None
-    per_strategy: dict[str, float] = {}
-    chosen_weights: dict[str, float] = {}
-    chosen_horizon_weights: dict[int, dict[str, float]] | None = None
-
-    def consider(
-        name: str,
-        val_raw: pd.DataFrame,
-        test_raw: pd.DataFrame,
-        display_weights: dict[str, float],
-        by_horizon: dict[int, dict[str, float]] | None = None,
-    ) -> None:
-        nonlocal best_score, chosen, best_frames, chosen_weights, chosen_horizon_weights
-        for window in windows:
-            val_candidate = (
-                blending.zero_out_dead_series(split.train, val_raw, window) if window else val_raw
-            )
-            score = blending.score_against(val_candidate, split.val)
-            per_strategy[name] = min(per_strategy.get(name, float("inf")), score)
-            if score < best_score:
-                best_score = score
-                chosen = (name, window)
-                test_candidate = (
-                    blending.zero_out_dead_series(labeled, test_raw, window) if window else test_raw
-                )
-                best_frames = (val_candidate, test_candidate)
-                chosen_weights = display_weights
-                chosen_horizon_weights = by_horizon
-
-    for name, weights in weight_options.items():
-        consider(
-            name, blending.blend(val_preds, weights), blending.blend(test_preds, weights), weights
-        )
-
-    consider(
-        "fitted_horizon",
-        blending.blend_by_horizon(val_preds, horizon_weights, origin_val),
-        blending.blend_by_horizon(test_preds, horizon_weights, origin_test),
-        {
-            name: float(np.mean([w.get(name, 0.0) for w in horizon_weights.values()]))
-            for name in val_preds
-        },
-        horizon_weights,
-    )
-
-    assert chosen is not None and best_frames is not None
-    strategy, zero_window = chosen
-    val_blend, test_blend = best_frames
-    weights = chosen_weights
+    choice = blending.choose_blend(val_preds, test_preds, split.train, split.val, labeled)
+    strategy = str(choice["strategy"])
+    zero_window = int(choice["zero_window"])
+    val_blend = choice["val"]
+    test_blend = choice["test"]
+    weights: dict[str, float] = choice["weights"]
+    chosen_horizon_weights = choice.get("weights_by_horizon")
+    chosen_family_weights = choice.get("weights_by_family")
+    best_score = float(choice["score"])
+    best_single = str(choice["best_single"])
+    per_strategy: dict[str, float] = choice["candidates"]
     blend_business = blending.business_against(val_blend, split.val)
 
     for row in models_meta:
@@ -417,6 +362,7 @@ def run_experiment(
         "rule": "検証 RMSLE の逆数を重みにした。",
         "fitted": "検証窓で RMSLE を最小にする非負の重みを当てた。",
         "fitted_horizon": "予測日ごとに非負の重みを当てた。再帰の後半劣化を日別に補う。",
+        "fitted_family": "商品ファミリーごとに非負の重みを当てた。系統ごとの当たり方の違いを残す。",
         "single": f"混ぜると悪化したので {best_single} 単体を採用した。",
     }
     zero_note = (
@@ -441,6 +387,14 @@ def run_experiment(
                     for step, part in chosen_horizon_weights.items()
                 }
                 if chosen_horizon_weights is not None
+                else None
+            ),
+            "weights_by_family": (
+                {
+                    family: {k: round(v, 4) for k, v in part.items()}
+                    for family, part in chosen_family_weights.items()
+                }
+                if chosen_family_weights is not None
                 else None
             ),
             "candidates": {k: round(v, 5) for k, v in per_strategy.items()},
@@ -492,3 +446,116 @@ def run_experiment(
     )
     write_status(out_dir, "done", "完了", 100)
     return result
+
+
+def reblend_cached(prepared: Prepared, out_dir: Path, source_run: Path) -> JsonDict:
+    """保存済みのモデル予測だけを読み、混ぜ方を検証窓でやり直す。"""
+    from retail_lab.tracking import PRED_DIR
+
+    pred_dir = source_run / PRED_DIR
+    val_preds: dict[str, pd.DataFrame] = {}
+    test_preds: dict[str, pd.DataFrame] = {}
+    for path in sorted(pred_dir.glob("*_val.parquet")):
+        name = path.name.removesuffix("_val.parquet")
+        if name == "blend":
+            continue
+        test_path = pred_dir / f"{name}_test.parquet"
+        if not test_path.exists():
+            continue
+        val_preds[name] = pd.read_parquet(path)
+        test_preds[name] = pd.read_parquet(test_path)
+    if not val_preds:
+        raise FileNotFoundError(f"再利用できる予測がありません: {pred_dir}")
+
+    split = split_panel(prepared.panel, prepared.spec.horizon)
+    write_status(out_dir, "blend", "保存済み予測の混ぜ方を検証窓で選ぶ", 90)
+    choice = blending.choose_blend(val_preds, test_preds, split.train, split.val, split.labeled)
+    strategy = str(choice["strategy"])
+    zero_window = int(choice["zero_window"])
+    val_blend = choice["val"]
+    test_blend = choice["test"]
+    weights: dict[str, float] = choice["weights"]
+    chosen_horizon_weights = choice.get("weights_by_horizon")
+    chosen_family_weights = choice.get("weights_by_family")
+    best_score = float(choice["score"])
+    best_single = str(choice["best_single"])
+    per_strategy: dict[str, float] = choice["candidates"]
+    blend_business = blending.business_against(val_blend, split.val)
+
+    source = json.loads((source_run / "result.json").read_text(encoding="utf-8"))
+    models_meta = [row for row in source.get("models", []) if row.get("id") != "blend"]
+    for row in models_meta:
+        if row.get("status") == "ok":
+            row["weight"] = round(weights.get(str(row.get("id")), 0.0), 4)
+    notes = {
+        "rule": "検証 RMSLE の逆数を重みにした。",
+        "fitted": "検証窓で RMSLE を最小にする非負の重みを当てた。",
+        "fitted_horizon": "予測日ごとに非負の重みを当てた。再帰の後半劣化を日別に補う。",
+        "fitted_family": "商品ファミリーごとに非負の重みを当てた。系統ごとの当たり方の違いを残す。",
+        "single": f"混ぜると悪化したので {best_single} 単体を採用した。",
+    }
+    zero_note = (
+        f"直近{zero_window}日がすべて0の系列は0にした。"
+        if zero_window
+        else "ゼロ系列の後処理は、検証窓で悪化したので使わない。"
+    )
+    models_meta.append(
+        {
+            "id": "blend",
+            "title": "提出する予測",
+            "note": f"{notes[strategy]}{zero_note}",
+            "rmsle": round(best_score, 5),
+            "status": "ok",
+            "weight": 1.0,
+            "strategy": strategy,
+            "zero_window": zero_window,
+            "weights": {k: round(v, 4) for k, v in weights.items()},
+            "weights_by_horizon": (
+                {
+                    str(step): {k: round(v, 4) for k, v in part.items()}
+                    for step, part in chosen_horizon_weights.items()
+                }
+                if chosen_horizon_weights is not None
+                else None
+            ),
+            "weights_by_family": (
+                {
+                    family: {k: round(v, 4) for k, v in part.items()}
+                    for family, part in chosen_family_weights.items()
+                }
+                if chosen_family_weights is not None
+                else None
+            ),
+            "candidates": {k: round(v, 5) for k, v in per_strategy.items()},
+            "wape": round(blend_business["wape"], 4),
+            "bias": round(blend_business["bias"], 4),
+            "under_rate": round(blend_business["under_rate"], 4),
+            "mae": round(blend_business["mae"], 2),
+            "reblend_of": source.get("run_id"),
+        }
+    )
+    submission = (
+        test_blend[[ROW_ID, PRED]].rename(columns={ROW_ID: "id", PRED: "sales"}).sort_values("id")
+    )
+    out_dir.mkdir(parents=True, exist_ok=True)
+    submission.to_csv(out_dir / "submission.csv", index=False)
+    val_horizon = split.val.copy()
+    val_horizon["horizon"] = (val_horizon[DATE] - val_horizon[DATE].min()).dt.days + 1
+    error_slices: JsonDict = {
+        "horizon": blending.grouped_rmsle(
+            val_blend, val_horizon, "horizon", worst=prepared.spec.horizon
+        )
+    }
+    if "family" in split.val.columns:
+        error_slices["family"] = blending.grouped_rmsle(val_blend, split.val, "family")
+    val_preds["blend"] = val_blend
+    test_preds["blend"] = test_blend
+    write_preds(out_dir, val_preds, test_preds)
+    source["models"] = models_meta
+    source["error_slices"] = error_slices
+    source["kaggle_ready"] = prepared.source == "kaggle"
+    (out_dir / "result.json").write_text(
+        json.dumps(source, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    write_status(out_dir, "done", "完了", 100)
+    return source

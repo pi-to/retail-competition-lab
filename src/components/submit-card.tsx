@@ -28,6 +28,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { submitRecommendation } from "@/lib/competitions/store-sales-experiments";
 import type { Result } from "@/lib/types";
 
 type Receipt = {
@@ -82,7 +83,8 @@ export function SubmitCard({ result }: { result: Result }) {
     importance: feature.gain,
   }));
   const ready = result.source === "kaggle" && !submitting;
-  const description = `Retail Lab | RMSLE ${blend?.rmsle?.toFixed(4) ?? "unknown"} | ${new Date().toISOString().slice(0, 10)}`;
+  const rec = submitRecommendation();
+  const description = `Retail Lab | ${rec.experiment.id} | RMSLE ${blend?.rmsle?.toFixed(4) ?? "unknown"} | ${new Date().toISOString().slice(0, 10)}`;
 
   /** 確認画面を開くときに、権限と参加状態を先に確かめる。提出はしない。 */
   async function review() {
@@ -141,6 +143,12 @@ export function SubmitCard({ result }: { result: Result }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
+        <Alert>
+          <AlertTitle>{rec.headline}</AlertTitle>
+          <AlertDescription>
+            このボタンが送るのは Champion の CSV です。公開LB 0.39515 の古い混合ではありません。
+          </AlertDescription>
+        </Alert>
         {!confirming ? (
           <Button onClick={() => void review()} disabled={!ready}>
             {result.source === "kaggle" ? "提出内容を確認" : "公式データで再計算してください"}
