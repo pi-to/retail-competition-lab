@@ -203,7 +203,10 @@ export function StoreApp({
       {result ? (
         <>
           <section className="flex flex-col gap-3">
-            <SectionTitle title="提出" sub="検証済みの予測をKaggleへ送る" />
+            <SectionTitle
+              title="提出"
+              sub="迷ったら表の『次に提出する』1本。いまのChampion CSVをKaggleへ送る"
+            />
             {content.submissions.length > 0 ? (
               <Card>
                 <CardHeader>
