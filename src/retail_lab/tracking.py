@@ -13,16 +13,43 @@ import tempfile
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 JsonDict = dict[str, Any]
 ARTIFACTS = ("result.json", "submission.csv")
+PRED_DIR = "preds"
 
 
 def new_run_id(label: str = "run") -> str:
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     safe = "".join(c if c.isalnum() or c == "-" else "-" for c in label.lower()).strip("-")
     return f"{stamp}-{safe or 'run'}-{uuid.uuid4().hex[:6]}"
+
+
+def write_preds(
+    out: Path, val_preds: dict[str, pd.DataFrame], test_preds: dict[str, pd.DataFrame]
+) -> None:
+    dest = out / PRED_DIR
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.mkdir(parents=True)
+    for name, frame in val_preds.items():
+        frame.to_parquet(dest / f"{name}_val.parquet", index=False)
+    for name, frame in test_preds.items():
+        frame.to_parquet(dest / f"{name}_test.parquet", index=False)
+
+
+def load_cached_preds(run_dir: Path, model_id: str) -> tuple[pd.DataFrame, pd.DataFrame] | None:
+    import pandas as pd
+
+    val = run_dir / PRED_DIR / f"{model_id}_val.parquet"
+    test = run_dir / PRED_DIR / f"{model_id}_test.parquet"
+    if not val.exists() or not test.exists():
+        return None
+    return pd.read_parquet(val), pd.read_parquet(test)
 
 
 def _read_json(path: Path, default: Any) -> Any:
@@ -86,6 +113,9 @@ def archive_run(out: Path, run_id: str, label: str) -> JsonDict:
     try:
         for name in ARTIFACTS:
             shutil.copy2(out / name, temporary / name)
+        preds = out / PRED_DIR
+        if preds.exists():
+            shutil.copytree(preds, temporary / PRED_DIR)
         _atomic_json(temporary / "run.json", record)
         temporary.rename(run_dir)
     finally:
@@ -133,6 +163,16 @@ def promote_run(out: Path, ref: str) -> JsonDict:
         temporary = out / f".{name}.{uuid.uuid4().hex[:6]}"
         shutil.copy2(run_dir / name, temporary)
         os.replace(temporary, out / name)
+    src = run_dir / PRED_DIR
+    dest = out / PRED_DIR
+    if src.exists():
+        temporary = out / f".{PRED_DIR}.{uuid.uuid4().hex[:6]}"
+        shutil.copytree(src, temporary)
+        if dest.exists():
+            shutil.rmtree(dest)
+        os.replace(temporary, dest)
+    elif dest.exists():
+        shutil.rmtree(dest)
     tag_run(out, "champion", run_id)
     return _read_json(run_dir / "run.json", {})
 

@@ -12,12 +12,14 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from retail_lab import DATE, ROW_ID, SERIES_ID, TARGET, blending
 from retail_lab.competition import Prepared
 from retail_lab.models import chronos, gbdt, naive, timesfm
 from retail_lab.status import write_status
+from retail_lab.tracking import load_cached_preds, write_preds
 from retail_lab.validation import Split, split_panel
 
 JsonDict = dict[str, Any]
@@ -164,7 +166,12 @@ def _client_report(
     }
 
 
-def run_experiment(prepared: Prepared, out_dir: Path, skip_foundation: bool = False) -> JsonDict:
+def run_experiment(
+    prepared: Prepared,
+    out_dir: Path,
+    skip_foundation: bool = False,
+    reuse_run: Path | None = None,
+) -> JsonDict:
     started = time.time()
     spec = prepared.spec
     horizon = spec.horizon
@@ -265,44 +272,72 @@ def run_experiment(prepared: Prepared, out_dir: Path, skip_foundation: bool = Fa
 
     if not skip_foundation:
         try:
-            write_status(out_dir, "chronos", "Chronos-2 を読み込み中", 50)
-            pipe = chronos.load_pipeline()
-            write_status(out_dir, "chronos", f"Chronos-2 が検証窓を予測中（{n_series:,}系列）", 55)
-            chronos_val = chronos.forecast(
-                split.train, split.val, horizon, prepared.covariates, pipe=pipe
-            )
-            write_status(out_dir, "chronos", f"Chronos-2 が提出分を予測中（{n_series:,}系列）", 63)
-            chronos_test = chronos.forecast(
-                labeled, split.future, horizon, prepared.covariates, pipe=pipe
-            )
+            cached = load_cached_preds(reuse_run, "chronos2") if reuse_run else None
+            if cached is not None:
+                write_status(out_dir, "chronos", "Chronos-2 を前回Runから再利用", 55)
+                chronos_val, chronos_test = cached
+            else:
+                write_status(out_dir, "chronos", "Chronos-2 を読み込み中", 50)
+                pipe = chronos.load_pipeline()
+                write_status(
+                    out_dir, "chronos", f"Chronos-2 が検証窓を予測中（{n_series:,}系列）", 55
+                )
+                chronos_val = chronos.forecast(
+                    split.train, split.val, horizon, prepared.covariates, pipe=pipe
+                )
+                write_status(
+                    out_dir, "chronos", f"Chronos-2 が提出分を予測中（{n_series:,}系列）", 63
+                )
+                chronos_test = chronos.forecast(
+                    labeled, split.future, horizon, prepared.covariates, pipe=pipe
+                )
+                del pipe
             register(
                 "chronos2",
                 "Chronos-2",
-                "AWS の時系列基盤モデル。数量の系列に、未来に分かる列を添えて渡す。学習しない。",
+                "AWS の時系列基盤モデル。数量の系列に、未来に分かる列を添えて渡す。学習しない。"
+                + ("前回Runの予測を再利用。" if cached is not None else ""),
                 chronos_val,
                 chronos_test,
-                {"checkpoint": chronos.CHECKPOINT, "org": chronos.ORG},
+                {
+                    "checkpoint": chronos.CHECKPOINT,
+                    "org": chronos.ORG,
+                    "reused": cached is not None,
+                },
             )
-            del pipe
         except Exception as exc:  # noqa: BLE001 - 基盤モデルが落ちても実験は続ける
             skipped("chronos2", "Chronos-2", chronos.CHECKPOINT, chronos.ORG, exc)
 
         try:
-            write_status(out_dir, "timesfm", "TimesFM 2.5 を読み込み中", 72)
-            model = timesfm.load_model(max_horizon=max(32, horizon))
-            write_status(out_dir, "timesfm", f"TimesFM が検証窓を予測中（{n_series:,}系列）", 77)
-            timesfm_val = timesfm.forecast(split.train, split.val, horizon, model=model)
-            write_status(out_dir, "timesfm", f"TimesFM が提出分を予測中（{n_series:,}系列）", 84)
-            timesfm_test = timesfm.forecast(labeled, split.future, horizon, model=model)
+            cached = load_cached_preds(reuse_run, "timesfm") if reuse_run else None
+            if cached is not None:
+                write_status(out_dir, "timesfm", "TimesFM を前回Runから再利用", 77)
+                timesfm_val, timesfm_test = cached
+            else:
+                write_status(out_dir, "timesfm", "TimesFM 2.5 を読み込み中", 72)
+                model = timesfm.load_model(max_horizon=max(32, horizon))
+                write_status(
+                    out_dir, "timesfm", f"TimesFM が検証窓を予測中（{n_series:,}系列）", 77
+                )
+                timesfm_val = timesfm.forecast(split.train, split.val, horizon, model=model)
+                write_status(
+                    out_dir, "timesfm", f"TimesFM が提出分を予測中（{n_series:,}系列）", 84
+                )
+                timesfm_test = timesfm.forecast(labeled, split.future, horizon, model=model)
+                del model
             register(
                 "timesfm",
                 "TimesFM 2.5",
-                "Google の時系列基盤モデル。数量の並びだけを読む。AWS に依存しない対照実験。",
+                "Google の時系列基盤モデル。数量の並びだけを読む。AWS に依存しない対照実験。"
+                + ("前回Runの予測を再利用。" if cached is not None else ""),
                 timesfm_val,
                 timesfm_test,
-                {"checkpoint": timesfm.CHECKPOINT, "org": timesfm.ORG},
+                {
+                    "checkpoint": timesfm.CHECKPOINT,
+                    "org": timesfm.ORG,
+                    "reused": cached is not None,
+                },
             )
-            del model
         except Exception as exc:  # noqa: BLE001 - 同上
             skipped("timesfm", "TimesFM 2.5", timesfm.CHECKPOINT, timesfm.ORG, exc)
 
@@ -317,14 +352,25 @@ def run_experiment(prepared: Prepared, out_dir: Path, skip_foundation: bool = Fa
     # 0 は「後処理をしない」。窓を長く取り過ぎると、まだ売れている系列まで0にしてしまう
     windows = (0, 3, 7, 14, 21)
 
+    origin_val = split.train[DATE].max()
+    origin_test = labeled[DATE].max()
+    horizon_weights = blending.fit_log_weights_by_horizon(val_preds, split.val, origin_val)
+
     chosen: tuple[str, int] | None = None
     best_score = float("inf")
     best_frames: tuple[pd.DataFrame, pd.DataFrame] | None = None
     per_strategy: dict[str, float] = {}
+    chosen_weights: dict[str, float] = {}
+    chosen_horizon_weights: dict[int, dict[str, float]] | None = None
 
-    for name, weights in weight_options.items():
-        val_raw = blending.blend(val_preds, weights)
-        test_raw = blending.blend(test_preds, weights)
+    def consider(
+        name: str,
+        val_raw: pd.DataFrame,
+        test_raw: pd.DataFrame,
+        display_weights: dict[str, float],
+        by_horizon: dict[int, dict[str, float]] | None = None,
+    ) -> None:
+        nonlocal best_score, chosen, best_frames, chosen_weights, chosen_horizon_weights
         for window in windows:
             val_candidate = (
                 blending.zero_out_dead_series(split.train, val_raw, window) if window else val_raw
@@ -338,11 +384,29 @@ def run_experiment(prepared: Prepared, out_dir: Path, skip_foundation: bool = Fa
                     blending.zero_out_dead_series(labeled, test_raw, window) if window else test_raw
                 )
                 best_frames = (val_candidate, test_candidate)
+                chosen_weights = display_weights
+                chosen_horizon_weights = by_horizon
+
+    for name, weights in weight_options.items():
+        consider(
+            name, blending.blend(val_preds, weights), blending.blend(test_preds, weights), weights
+        )
+
+    consider(
+        "fitted_horizon",
+        blending.blend_by_horizon(val_preds, horizon_weights, origin_val),
+        blending.blend_by_horizon(test_preds, horizon_weights, origin_test),
+        {
+            name: float(np.mean([w.get(name, 0.0) for w in horizon_weights.values()]))
+            for name in val_preds
+        },
+        horizon_weights,
+    )
 
     assert chosen is not None and best_frames is not None
     strategy, zero_window = chosen
     val_blend, test_blend = best_frames
-    weights = weight_options[strategy]
+    weights = chosen_weights
     blend_business = blending.business_against(val_blend, split.val)
 
     for row in models_meta:
@@ -352,6 +416,7 @@ def run_experiment(prepared: Prepared, out_dir: Path, skip_foundation: bool = Fa
     notes = {
         "rule": "検証 RMSLE の逆数を重みにした。",
         "fitted": "検証窓で RMSLE を最小にする非負の重みを当てた。",
+        "fitted_horizon": "予測日ごとに非負の重みを当てた。再帰の後半劣化を日別に補う。",
         "single": f"混ぜると悪化したので {best_single} 単体を採用した。",
     }
     zero_note = (
@@ -370,6 +435,14 @@ def run_experiment(prepared: Prepared, out_dir: Path, skip_foundation: bool = Fa
             "strategy": strategy,
             "zero_window": zero_window,
             "weights": {k: round(v, 4) for k, v in weights.items()},
+            "weights_by_horizon": (
+                {
+                    str(step): {k: round(v, 4) for k, v in part.items()}
+                    for step, part in chosen_horizon_weights.items()
+                }
+                if chosen_horizon_weights is not None
+                else None
+            ),
             "candidates": {k: round(v, 5) for k, v in per_strategy.items()},
             "wape": round(blend_business["wape"], 4),
             "bias": round(blend_business["bias"], 4),
@@ -382,6 +455,17 @@ def run_experiment(prepared: Prepared, out_dir: Path, skip_foundation: bool = Fa
         test_blend[[ROW_ID, PRED]].rename(columns={ROW_ID: "id", PRED: "sales"}).sort_values("id")
     )
     submission.to_csv(out_dir / "submission.csv", index=False)
+
+    val_horizon = split.val.copy()
+    val_horizon["horizon"] = (val_horizon[DATE] - val_horizon[DATE].min()).dt.days + 1
+    error_slices: JsonDict = {
+        "horizon": blending.grouped_rmsle(val_blend, val_horizon, "horizon", worst=horizon)
+    }
+    if "family" in split.val.columns:
+        error_slices["family"] = blending.grouped_rmsle(val_blend, split.val, "family")
+    val_preds["blend"] = val_blend
+    test_preds["blend"] = test_blend
+    write_preds(out_dir, val_preds, test_preds)
 
     result: JsonDict = {
         "competition": spec.slug,
@@ -396,6 +480,7 @@ def run_experiment(prepared: Prepared, out_dir: Path, skip_foundation: bool = Fa
         "metric": "RMSLE",
         "models": models_meta,
         "feature_importance": importance[:16],
+        "error_slices": error_slices,
         "preview": _preview(split, val_preds, val_blend),
         "method": list(spec.method),
         "report": _client_report(prepared, split, models_meta, n_series),

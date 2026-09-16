@@ -91,6 +91,54 @@ def test_seasonal_naive_covers_every_future_row():
     assert (pred["pred"] >= 0).all()
 
 
+def test_grouped_rmsle_lists_the_worst_group_first():
+    pred = pd.DataFrame({"row_id": [1, 2, 3, 4], "pred": [1.0, 1.0, 10.0, 10.0]})
+    actual = pd.DataFrame(
+        {
+            "row_id": [1, 2, 3, 4],
+            "target": [1.0, 1.0, 1.0, 1.0],
+            "family": ["easy", "easy", "hard", "hard"],
+        }
+    )
+    rows = blending.grouped_rmsle(pred, actual, "family")
+    assert rows[0]["group"] == "hard"
+    assert rows[0]["rmsle"] > rows[1]["rmsle"]
+
+
+def test_horizon_blend_picks_the_model_that_matches_each_day():
+    """1日目に当たるモデルと2日目に当たるモデルを、日ごとに選べる。"""
+    truth = pd.DataFrame(
+        {
+            "row_id": [1, 2, 3, 4],
+            "date": pd.to_datetime(["2017-08-16", "2017-08-16", "2017-08-17", "2017-08-17"]),
+            "target": [10.0, 20.0, 30.0, 40.0],
+        }
+    )
+    preds = {
+        "early": pd.DataFrame(
+            {
+                "row_id": [1, 2, 3, 4],
+                "date": truth["date"],
+                "pred": [10.0, 20.0, 1.0, 1.0],
+            }
+        ),
+        "late": pd.DataFrame(
+            {
+                "row_id": [1, 2, 3, 4],
+                "date": truth["date"],
+                "pred": [1.0, 1.0, 30.0, 40.0],
+            }
+        ),
+    }
+    origin = pd.Timestamp("2017-08-15")
+    weights = blending.fit_log_weights_by_horizon(preds, truth, origin)
+    blended = blending.blend_by_horizon(preds, weights, origin)
+    assert blending.score_against(blended, truth) < blending.score_against(
+        blending.blend(preds, blending.fit_log_weights(preds, truth)), truth
+    )
+    assert blended.sort_values("row_id")["pred"].tolist() == pytest.approx([10.0, 20.0, 30.0, 40.0])
+
+
 def test_inverse_rmsle_weights_favor_the_better_model():
     weights = blending.inverse_rmsle_weights({"good": 0.2, "bad": 0.4})
     assert weights["good"] > weights["bad"]
@@ -160,6 +208,19 @@ def test_registry_exposes_specs_with_matching_slugs():
 def test_registry_rejects_unknown_slug():
     with pytest.raises(KeyError):
         registry.get("no-such-competition")
+
+
+EXOG_DEFAULTS = {
+    "is_regional_holiday": 0,
+    "is_holiday_eve": 0,
+    "days_to_holiday": 14,
+    "days_after_holiday": 14,
+    "promo_lag_1": 0.0,
+    "promo_lag_7": 0.0,
+    "promo_lead_1": 0.0,
+    "promo_lead_7": 0.0,
+    "promo_roll_7": 0.0,
+}
 
 
 def test_demo_data_matches_the_official_column_names(tmp_path: Path):
@@ -325,6 +386,21 @@ def test_archive_run_is_immutable_and_listed(tmp_path: Path):
         archive_run(out, run_id="run-a", label="overwrite")
 
 
+def test_archive_run_keeps_prediction_cache(tmp_path: Path):
+    from retail_lab.tracking import archive_run, load_cached_preds, write_preds
+
+    out = tmp_path / "outputs" / "store-sales"
+    out.mkdir(parents=True)
+    (out / "result.json").write_text(json.dumps(_fake_result(0.4)), encoding="utf-8")
+    (out / "submission.csv").write_text("id,sales\n1,1.0\n", encoding="utf-8")
+    val = pd.DataFrame({"row_id": [1], "pred": [1.5]})
+    write_preds(out, {"chronos2": val}, {"chronos2": val})
+    archive_run(out, run_id="run-a", label="cached")
+    loaded = load_cached_preds(out / "runs" / "run-a", "chronos2")
+    assert loaded is not None
+    assert loaded[0]["pred"].tolist() == [1.5]
+
+
 def test_better_run_becomes_champion_and_worse_run_does_not(tmp_path: Path):
     from retail_lab.tracking import archive_run, champion, consider_champion
 
@@ -392,6 +468,7 @@ def test_recursive_forecast_never_reads_future_targets():
                 "is_local_holiday": 0,
                 "is_earthquake": 0,
                 "transactions_lag16": 100.0,
+                **EXOG_DEFAULTS,
             }
             row_id += 1
             (train_rows if i < 93 else future_rows).append(row)
@@ -431,6 +508,7 @@ def test_recursive_forecast_returns_every_row_nonnegative():
         "is_local_holiday": 0,
         "is_earthquake": 0,
         "transactions_lag16": 100.0,
+        **EXOG_DEFAULTS,
     }.items():
         panel[column] = value
     split = split_panel(panel, 4)
@@ -441,3 +519,145 @@ def test_recursive_forecast_returns_every_row_nonnegative():
     assert prediction["row_id"].is_unique
     assert prediction["pred"].notna().all()
     assert (prediction["pred"] >= 0).all()
+
+
+def test_direct_horizon_forecast_never_reads_future_targets():
+    """各予測日を一括で出すモデルも、検証の正解には触れない。"""
+    from retail_lab.competitions.store_sales.direct import fit_predict
+
+    panel = _panel(days=90, horizon=4)
+    for column, value in {
+        "family": "A",
+        "store_nbr": 1,
+        "type": "A",
+        "cluster": 1,
+        "onpromotion": 0.0,
+        "promo_log": 0.0,
+        "oil": 50.0,
+        "oil_lag7": 50.0,
+        "dow": 1,
+        "day": 1,
+        "month": 1,
+        "week": 1,
+        "is_weekend": 0,
+        "is_payday": 0,
+        "is_national_holiday": 0,
+        "is_local_holiday": 0,
+        "is_earthquake": 0,
+        "transactions_lag16": 100.0,
+        **EXOG_DEFAULTS,
+    }.items():
+        panel[column] = value
+    split = split_panel(panel, 4)
+    changed = split.val.copy()
+    changed["target"] = 999999.0
+
+    first, _ = fit_predict(split.train, split.val, n_estimators=8, context_days=100)
+    second, _ = fit_predict(split.train, changed, n_estimators=8, context_days=100)
+
+    assert first.sort_values("row_id")["pred"].tolist() == pytest.approx(
+        second.sort_values("row_id")["pred"].tolist()
+    )
+    assert len(first) == len(split.val)
+    assert first["row_id"].is_unique
+    assert first["pred"].notna().all()
+    assert (first["pred"] >= 0).all()
+
+
+def test_recursive_drop_earthquake_does_not_read_future_targets():
+    from retail_lab.competitions.store_sales.recursive import fit_predict
+
+    panel = _panel(days=90, horizon=4)
+    for column, value in {
+        "family": "A",
+        "store_nbr": 1,
+        "type": "A",
+        "cluster": 1,
+        "onpromotion": 0.0,
+        "promo_log": 0.0,
+        "oil": 50.0,
+        "oil_lag7": 50.0,
+        "dow": 1,
+        "day": 1,
+        "month": 1,
+        "week": 1,
+        "is_weekend": 0,
+        "is_payday": 0,
+        "is_national_holiday": 0,
+        "is_local_holiday": 0,
+        "is_earthquake": 0,
+        "transactions_lag16": 100.0,
+        **EXOG_DEFAULTS,
+    }.items():
+        panel[column] = value
+    panel.loc[panel["date"] < panel["date"].min() + pd.Timedelta(days=10), "is_earthquake"] = 1
+    split = split_panel(panel, 4)
+    changed = split.val.copy()
+    changed["target"] = 999999.0
+    first, _ = fit_predict(
+        split.train, split.val, n_estimators=8, context_days=100, drop_earthquake=True
+    )
+    second, _ = fit_predict(
+        split.train, changed, n_estimators=8, context_days=100, drop_earthquake=True
+    )
+    assert first.sort_values("row_id")["pred"].tolist() == pytest.approx(
+        second.sort_values("row_id")["pred"].tolist()
+    )
+
+
+def test_panel_adds_regional_holiday_eve_and_known_promo_leads(tmp_path: Path):
+    """地域祝日・前夜・プロモの先行は、提出CSVに載っている情報だけで作る。"""
+    from retail_lab.competitions.store_sales.data import Bundle, complete_daily_grid
+    from retail_lab.competitions.store_sales.demo import generate_demo
+    from retail_lab.competitions.store_sales.features import build_panel
+
+    generate_demo(tmp_path)
+    holidays = pd.read_csv(tmp_path / "holidays_events.csv")
+    holidays.loc[holidays["date"] == "2017-08-10", "transferred"] = True
+    holidays.loc[len(holidays)] = {
+        "date": "2017-08-11",
+        "type": "Holiday",
+        "locale": "Regional",
+        "locale_name": "Pichincha",
+        "description": "Regional test",
+        "transferred": False,
+    }
+    holidays.to_csv(tmp_path / "holidays_events.csv", index=False)
+
+    train = pd.read_csv(tmp_path / "train.csv", parse_dates=["date"])
+    train.loc[
+        (train["date"] == "2017-08-12")
+        & (train["store_nbr"] == 1)
+        & (train["family"] == "GROCERY I"),
+        "onpromotion",
+    ] = 9
+    train.to_csv(tmp_path / "train.csv", index=False)
+
+    bundle = Bundle(
+        train=complete_daily_grid(train),
+        test=pd.read_csv(tmp_path / "test.csv", parse_dates=["date"]),
+        stores=pd.read_csv(tmp_path / "stores.csv"),
+        oil=pd.read_csv(tmp_path / "oil.csv", parse_dates=["date"]),
+        holidays=pd.read_csv(tmp_path / "holidays_events.csv", parse_dates=["date"]),
+        transactions=pd.read_csv(tmp_path / "transactions.csv", parse_dates=["date"]),
+        source="demo",
+        data_dir=tmp_path,
+    )
+    bundle.holidays["transferred"] = (
+        bundle.holidays["transferred"].astype(str).str.lower().isin(["true", "1"])
+    )
+    panel = build_panel(bundle)
+    eve = panel[(panel["date"] == "2017-08-10") & (panel["family"] == "GROCERY I")]
+    holiday = panel[(panel["date"] == "2017-08-11") & (panel["family"] == "GROCERY I")]
+    transferred = panel[(panel["date"] == "2017-08-10") & (panel["family"] == "GROCERY I")]
+    lead = panel[
+        (panel["date"] == "2017-08-11")
+        & (panel["store_nbr"] == 1)
+        & (panel["family"] == "GROCERY I")
+    ]
+
+    assert set(holiday.loc[holiday["state"] == "Pichincha", "is_regional_holiday"]) == {1}
+    assert set(holiday.loc[holiday["state"] != "Pichincha", "is_regional_holiday"]) == {0}
+    assert set(eve.loc[eve["state"] == "Pichincha", "is_holiday_eve"]) == {1}
+    assert set(transferred["is_national_holiday"]) == {0}
+    assert float(lead["promo_lead_1"].iloc[0]) == 9.0

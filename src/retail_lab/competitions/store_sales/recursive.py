@@ -20,6 +20,11 @@ ROLLS = (7, 14, 28)
 BASE_FEATURES = [
     "onpromotion",
     "promo_log",
+    "promo_lag_1",
+    "promo_lag_7",
+    "promo_lead_1",
+    "promo_lead_7",
+    "promo_roll_7",
     "oil",
     "oil_lag7",
     "dow",
@@ -30,6 +35,10 @@ BASE_FEATURES = [
     "is_payday",
     "is_national_holiday",
     "is_local_holiday",
+    "is_regional_holiday",
+    "is_holiday_eve",
+    "days_to_holiday",
+    "days_after_holiday",
     "is_earthquake",
     "transactions_lag16",
     "store_nbr",
@@ -71,8 +80,9 @@ def fit_predict(
     train: pd.DataFrame,
     future: pd.DataFrame,
     *,
-    n_estimators: int = 220,
+    n_estimators: int = 320,
     context_days: int = 730,
+    drop_earthquake: bool = False,
 ) -> tuple[pd.DataFrame, list[dict[str, float | str]]]:
     """ファミリーごとに学習し、未来を日ごとに再帰予測する。
 
@@ -80,6 +90,8 @@ def fit_predict(
     """
     cutoff = train[DATE].max() - pd.Timedelta(days=context_days)
     recent = train[train[DATE] > cutoff]
+    if drop_earthquake and "is_earthquake" in recent.columns:
+        recent = recent[recent["is_earthquake"] == 0]
     featured = _training_features(recent)
     future_clean = future.drop(columns=[TARGET], errors="ignore")
 
