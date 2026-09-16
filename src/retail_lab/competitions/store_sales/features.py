@@ -20,6 +20,11 @@ GBDT_FEATURES = [
     "roll_mean_28_lag16",
     "onpromotion",
     "promo_log",
+    "promo_lag_1",
+    "promo_lag_7",
+    "promo_lead_1",
+    "promo_lead_7",
+    "promo_roll_7",
     "oil",
     "oil_lag7",
     "dow",
@@ -30,6 +35,10 @@ GBDT_FEATURES = [
     "is_payday",
     "is_national_holiday",
     "is_local_holiday",
+    "is_regional_holiday",
+    "is_holiday_eve",
+    "days_to_holiday",
+    "days_after_holiday",
     "is_earthquake",
     "transactions_lag16",
     "store_nbr",
@@ -39,7 +48,15 @@ GBDT_FEATURES = [
 ]
 CATEGORICALS = ["store_nbr", "family", "type", "cluster"]
 # 未来側でも値が分かる列だけを Chronos-2 に渡す
-CHRONOS_COVARIATES = ["onpromotion", "oil", "is_national_holiday", "is_payday"]
+CHRONOS_COVARIATES = [
+    "onpromotion",
+    "oil",
+    "is_national_holiday",
+    "is_local_holiday",
+    "is_regional_holiday",
+    "is_holiday_eve",
+    "is_payday",
+]
 
 
 def _oil_by_date(oil: pd.DataFrame, dates: pd.Series) -> pd.DataFrame:
@@ -51,12 +68,22 @@ def _oil_by_date(oil: pd.DataFrame, dates: pd.Series) -> pd.DataFrame:
     return merged[[DATE, "oil", "oil_lag7"]]
 
 
-def _holiday_flags(holidays: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _active_holidays(holidays: pd.DataFrame) -> pd.DataFrame:
     frame = holidays.copy()
     frame["date"] = pd.to_datetime(frame["date"])
-    real = frame[(frame["type"] != "Work Day") & (~frame["transferred"])]
+    return frame[(frame["type"] != "Work Day") & (~frame["transferred"])]
+
+
+def _holiday_flags(holidays: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    real = _active_holidays(holidays)
     national = (
         real[real["locale"] == "National"][["date"]].drop_duplicates().assign(is_national_holiday=1)
+    )
+    regional = (
+        real[real["locale"] == "Regional"][["date", "locale_name"]]
+        .drop_duplicates()
+        .rename(columns={"locale_name": "state"})
+        .assign(is_regional_holiday=1)
     )
     local = (
         real[real["locale"] == "Local"][["date", "locale_name"]]
@@ -64,7 +91,53 @@ def _holiday_flags(holidays: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         .rename(columns={"locale_name": "city"})
         .assign(is_local_holiday=1)
     )
-    return national, local
+    return national, regional, local
+
+
+def _holiday_proximity(
+    store_days: pd.DataFrame, holidays: pd.DataFrame, cap: int = 14
+) -> pd.DataFrame:
+    """店舗ごとに、効いている祝日までの日数と前夜フラグを付ける。"""
+    real = _active_holidays(holidays)
+    national = np.sort(real.loc[real["locale"] == "National", DATE].unique())
+    regional = real.loc[real["locale"] == "Regional", [DATE, "locale_name"]]
+    local = real.loc[real["locale"] == "Local", [DATE, "locale_name"]]
+    rows: list[pd.DataFrame] = []
+    for _store_nbr, group in store_days.groupby("store_nbr", sort=False):
+        state = group["state"].iloc[0]
+        city = group["city"].iloc[0]
+        extra = np.concatenate(
+            [
+                np.asarray(national, dtype="datetime64[ns]"),
+                regional.loc[regional["locale_name"] == state, DATE]
+                .to_numpy()
+                .astype("datetime64[ns]"),
+                local.loc[local["locale_name"] == city, DATE].to_numpy().astype("datetime64[ns]"),
+            ]
+        )
+        holiday_dates = (
+            np.sort(np.unique(extra)) if extra.size else np.array([], dtype="datetime64[ns]")
+        )
+        dates = pd.to_datetime(group[DATE]).to_numpy().astype("datetime64[ns]")
+        if holiday_dates.size == 0:
+            days_to = np.full(len(group), cap)
+            days_after = np.full(len(group), cap)
+        else:
+            index = np.searchsorted(holiday_dates, dates)
+            next_idx = np.clip(index, 0, len(holiday_dates) - 1)
+            prev_idx = np.clip(index - 1, 0, len(holiday_dates) - 1)
+            next_dates = holiday_dates[next_idx]
+            prev_dates = holiday_dates[prev_idx]
+            days_to = ((next_dates - dates) / np.timedelta64(1, "D")).astype(int)
+            days_after = ((dates - prev_dates) / np.timedelta64(1, "D")).astype(int)
+            days_to = np.where((index < len(holiday_dates)) & (days_to >= 0), days_to, cap)
+            days_after = np.where((index > 0) & (days_after >= 0), days_after, cap)
+        part = group[["store_nbr", DATE]].copy()
+        part["days_to_holiday"] = np.clip(days_to, 0, cap)
+        part["days_after_holiday"] = np.clip(days_after, 0, cap)
+        part["is_holiday_eve"] = (part["days_to_holiday"] == 1).astype(int)
+        rows.append(part)
+    return pd.concat(rows, ignore_index=True)
 
 
 def _calendar(dates: pd.Series) -> pd.DataFrame:
@@ -95,14 +168,27 @@ def build_panel(bundle: Bundle) -> pd.DataFrame:
     )
     panel["onpromotion"] = panel["onpromotion"].fillna(0).astype(float)
     panel["promo_log"] = np.log1p(panel["onpromotion"])
+    panel = panel.sort_values([SERIES_ID, DATE]).reset_index(drop=True)
+    promo = panel.groupby(SERIES_ID, sort=False)["onpromotion"]
+    panel["promo_lag_1"] = promo.shift(1).fillna(0)
+    panel["promo_lag_7"] = promo.shift(7).fillna(0)
+    panel["promo_lead_1"] = promo.shift(-1).fillna(0)
+    panel["promo_lead_7"] = promo.shift(-7).fillna(0)
+    panel["promo_roll_7"] = promo.transform(lambda series: series.rolling(7, min_periods=1).mean())
 
     panel = panel.merge(bundle.stores, on="store_nbr", how="left")
     panel = panel.merge(_oil_by_date(bundle.oil, panel[DATE]), on=DATE, how="left")
-    national, local = _holiday_flags(bundle.holidays)
+    national, regional, local = _holiday_flags(bundle.holidays)
     panel = panel.merge(national, on=DATE, how="left")
+    panel = panel.merge(regional, on=[DATE, "state"], how="left")
     panel = panel.merge(local, on=[DATE, "city"], how="left")
     panel["is_national_holiday"] = panel["is_national_holiday"].fillna(0).astype(int)
+    panel["is_regional_holiday"] = panel["is_regional_holiday"].fillna(0).astype(int)
     panel["is_local_holiday"] = panel["is_local_holiday"].fillna(0).astype(int)
+    proximity = _holiday_proximity(
+        panel[["store_nbr", DATE, "city", "state"]].drop_duplicates(), bundle.holidays
+    )
+    panel = panel.merge(proximity, on=["store_nbr", DATE], how="left")
 
     panel = pd.concat(
         [panel.reset_index(drop=True), _calendar(panel[DATE]).reset_index(drop=True)], axis=1

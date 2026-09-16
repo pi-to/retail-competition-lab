@@ -22,6 +22,7 @@ def test_demo_pipeline_builds_a_valid_submission_and_report(tmp_path: Path):
         "seasonal_naive",
         "lightgbm",
         "recursive_lgbm",
+        "direct_horizon_lgbm",
         "blend",
     }
     assert list(submission.columns) == ["id", "sales"]

@@ -162,6 +162,19 @@ def test_registry_rejects_unknown_slug():
         registry.get("no-such-competition")
 
 
+EXOG_DEFAULTS = {
+    "is_regional_holiday": 0,
+    "is_holiday_eve": 0,
+    "days_to_holiday": 14,
+    "days_after_holiday": 14,
+    "promo_lag_1": 0.0,
+    "promo_lag_7": 0.0,
+    "promo_lead_1": 0.0,
+    "promo_lead_7": 0.0,
+    "promo_roll_7": 0.0,
+}
+
+
 def test_demo_data_matches_the_official_column_names(tmp_path: Path):
     from retail_lab.competitions.store_sales.demo import generate_demo
 
@@ -392,6 +405,7 @@ def test_recursive_forecast_never_reads_future_targets():
                 "is_local_holiday": 0,
                 "is_earthquake": 0,
                 "transactions_lag16": 100.0,
+                **EXOG_DEFAULTS,
             }
             row_id += 1
             (train_rows if i < 93 else future_rows).append(row)
@@ -431,6 +445,7 @@ def test_recursive_forecast_returns_every_row_nonnegative():
         "is_local_holiday": 0,
         "is_earthquake": 0,
         "transactions_lag16": 100.0,
+        **EXOG_DEFAULTS,
     }.items():
         panel[column] = value
     split = split_panel(panel, 4)
@@ -467,6 +482,7 @@ def test_direct_horizon_forecast_never_reads_future_targets():
         "is_local_holiday": 0,
         "is_earthquake": 0,
         "transactions_lag16": 100.0,
+        **EXOG_DEFAULTS,
     }.items():
         panel[column] = value
     split = split_panel(panel, 4)
@@ -483,3 +499,61 @@ def test_direct_horizon_forecast_never_reads_future_targets():
     assert first["row_id"].is_unique
     assert first["pred"].notna().all()
     assert (first["pred"] >= 0).all()
+
+
+def test_panel_adds_regional_holiday_eve_and_known_promo_leads(tmp_path: Path):
+    """地域祝日・前夜・プロモの先行は、提出CSVに載っている情報だけで作る。"""
+    from retail_lab.competitions.store_sales.data import Bundle, complete_daily_grid
+    from retail_lab.competitions.store_sales.demo import generate_demo
+    from retail_lab.competitions.store_sales.features import build_panel
+
+    generate_demo(tmp_path)
+    holidays = pd.read_csv(tmp_path / "holidays_events.csv")
+    holidays.loc[holidays["date"] == "2017-08-10", "transferred"] = True
+    holidays.loc[len(holidays)] = {
+        "date": "2017-08-11",
+        "type": "Holiday",
+        "locale": "Regional",
+        "locale_name": "Pichincha",
+        "description": "Regional test",
+        "transferred": False,
+    }
+    holidays.to_csv(tmp_path / "holidays_events.csv", index=False)
+
+    train = pd.read_csv(tmp_path / "train.csv", parse_dates=["date"])
+    train.loc[
+        (train["date"] == "2017-08-12")
+        & (train["store_nbr"] == 1)
+        & (train["family"] == "GROCERY I"),
+        "onpromotion",
+    ] = 9
+    train.to_csv(tmp_path / "train.csv", index=False)
+
+    bundle = Bundle(
+        train=complete_daily_grid(train),
+        test=pd.read_csv(tmp_path / "test.csv", parse_dates=["date"]),
+        stores=pd.read_csv(tmp_path / "stores.csv"),
+        oil=pd.read_csv(tmp_path / "oil.csv", parse_dates=["date"]),
+        holidays=pd.read_csv(tmp_path / "holidays_events.csv", parse_dates=["date"]),
+        transactions=pd.read_csv(tmp_path / "transactions.csv", parse_dates=["date"]),
+        source="demo",
+        data_dir=tmp_path,
+    )
+    bundle.holidays["transferred"] = (
+        bundle.holidays["transferred"].astype(str).str.lower().isin(["true", "1"])
+    )
+    panel = build_panel(bundle)
+    eve = panel[(panel["date"] == "2017-08-10") & (panel["family"] == "GROCERY I")]
+    holiday = panel[(panel["date"] == "2017-08-11") & (panel["family"] == "GROCERY I")]
+    transferred = panel[(panel["date"] == "2017-08-10") & (panel["family"] == "GROCERY I")]
+    lead = panel[
+        (panel["date"] == "2017-08-11")
+        & (panel["store_nbr"] == 1)
+        & (panel["family"] == "GROCERY I")
+    ]
+
+    assert set(holiday.loc[holiday["state"] == "Pichincha", "is_regional_holiday"]) == {1}
+    assert set(holiday.loc[holiday["state"] != "Pichincha", "is_regional_holiday"]) == {0}
+    assert set(eve.loc[eve["state"] == "Pichincha", "is_holiday_eve"]) == {1}
+    assert set(transferred["is_national_holiday"]) == {0}
+    assert float(lead["promo_lead_1"].iloc[0]) == 9.0
