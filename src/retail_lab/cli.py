@@ -9,7 +9,7 @@ import sys
 import traceback
 from pathlib import Path
 
-from retail_lab import kaggle, registry
+from retail_lab import kaggle, registry, tracking
 from retail_lab.competition import data_dir, output_dir, run_output_dir
 from retail_lab.experiment import run_experiment
 from retail_lab.status import write_status
@@ -27,6 +27,7 @@ def _parser() -> argparse.ArgumentParser:
     run_cmd.add_argument("--source", choices=["demo", "kaggle"], default="demo")
     run_cmd.add_argument("--out", type=Path, default=None)
     run_cmd.add_argument("--skip-foundation", action="store_true", help="基盤モデルを飛ばす")
+    run_cmd.add_argument("--label", default="direct-foundation-v1", help="実験を識別する名前")
 
     sub.add_parser("fetch", help="Kaggle から公式データを取得する")
     sub.add_parser("status", help="データの取得状況を見る")
@@ -37,6 +38,16 @@ def _parser() -> argparse.ArgumentParser:
         help="Kaggle の提出一覧に表示する説明",
     )
     sub.add_parser("preflight", help="提出できる状態か（権限と参加状態）を確かめる")
+    runs_cmd = sub.add_parser("runs", help="実験Runとタグを見る")
+    runs_cmd.add_argument("--json", action="store_true")
+    promote_cmd = sub.add_parser("promote", help="Runまたはタグへロールバックする")
+    promote_cmd.add_argument("ref")
+    tag_cmd = sub.add_parser("tag", help="Runに人が読めるタグを付ける")
+    tag_cmd.add_argument("tag")
+    tag_cmd.add_argument("ref")
+    score_cmd = sub.add_parser("leaderboard", help="公開LBスコアをRunに記録する")
+    score_cmd.add_argument("ref")
+    score_cmd.add_argument("score", type=float)
     sub.add_parser("list", help="登録済みのコンペを見る")
     return parser
 
@@ -51,6 +62,27 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     spec = registry.spec(args.competition)
+
+    out_root = output_dir(root, spec.slug)
+    if args.command == "runs":
+        payload = {"runs": tracking.list_runs(out_root), "tags": tracking.tags(out_root)}
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "promote":
+        print(json.dumps(tracking.promote_run(out_root, args.ref), ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "tag":
+        tracking.tag_run(out_root, args.tag, tracking.resolve(out_root, args.ref))
+        return 0
+    if args.command == "leaderboard":
+        print(
+            json.dumps(
+                tracking.set_leaderboard(out_root, args.ref, args.score),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
 
     if args.command == "status":
         target = data_dir(root, spec.slug, "kaggle")
@@ -125,10 +157,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     out = args.out or run_output_dir(root, spec.slug, args.source)
-    return _run(root, spec.slug, args.source, out, skip_foundation=args.skip_foundation)
+    return _run(
+        root, spec.slug, args.source, out, skip_foundation=args.skip_foundation, label=args.label
+    )
 
 
-def _run(root: Path, slug: str, source: str, out: Path, skip_foundation: bool) -> int:
+def _run(root: Path, slug: str, source: str, out: Path, skip_foundation: bool, label: str) -> int:
     """実験を1本走らせる。画面はここが書くファイルだけを見る。"""
     out.mkdir(parents=True, exist_ok=True)
     error_path = out / "error.json"
@@ -138,7 +172,15 @@ def _run(root: Path, slug: str, source: str, out: Path, skip_foundation: bool) -
     write_status(out, "load", "データを読み込みます", 5)
     try:
         prepared = registry.get(slug).prepare(root, source)
-        run_experiment(prepared, out, skip_foundation=skip_foundation)
+        result = run_experiment(prepared, out, skip_foundation=skip_foundation)
+        run_id = tracking.new_run_id(label)
+        result["run_id"] = run_id
+        result["method_version"] = label
+        (out / "result.json").write_text(
+            json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        tracking.archive_run(out, run_id, label)
+        tracking.consider_champion(out, run_id)
     except kaggle.KaggleError as exc:
         _fail(out, str(exc), exc.hint)
         return 1

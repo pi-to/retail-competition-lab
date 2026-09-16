@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -23,6 +24,22 @@ class CompetitionSpec:
     method: tuple[dict[str, str], ...] = field(default=())
 
 
+Predictor = Callable[
+    [pd.DataFrame, pd.DataFrame], tuple[pd.DataFrame, list[dict[str, float | str]]]
+]
+
+
+@dataclass(frozen=True)
+class CandidateModel:
+    """コンペ固有で共通実験ループに追加するモデル。"""
+
+    id: str
+    title: str
+    note: str
+    predict: Predictor
+    org: str = "custom"
+
+
 @dataclass
 class Prepared:
     """共通の実験ループに渡す形。
@@ -37,6 +54,7 @@ class Prepared:
     features: list[str]
     categoricals: list[str]
     covariates: list[str]
+    candidates: list[CandidateModel] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
 

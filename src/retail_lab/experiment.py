@@ -245,15 +245,33 @@ def run_experiment(prepared: Prepared, out_dir: Path, skip_foundation: bool = Fa
         {"top_features": importance[:8]},
     )
 
+    for index, candidate in enumerate(prepared.candidates):
+        try:
+            pct = 38 + index * 6
+            write_status(out_dir, candidate.id, f"{candidate.title} が検証窓を予測中", pct)
+            candidate_val, candidate_importance = candidate.predict(split.train, split.val)
+            write_status(out_dir, candidate.id, f"{candidate.title} が提出分を予測中", pct + 4)
+            candidate_test, _ = candidate.predict(labeled, split.future)
+            register(
+                candidate.id,
+                candidate.title,
+                candidate.note,
+                candidate_val,
+                candidate_test,
+                {"org": candidate.org, "top_features": candidate_importance[:8]},
+            )
+        except Exception as exc:  # noqa: BLE001 - 候補が落ちても既存モデルで続ける
+            skipped(candidate.id, candidate.title, candidate.id, candidate.org, exc)
+
     if not skip_foundation:
         try:
-            write_status(out_dir, "chronos", "Chronos-2 を読み込み中", 45)
+            write_status(out_dir, "chronos", "Chronos-2 を読み込み中", 50)
             pipe = chronos.load_pipeline()
-            write_status(out_dir, "chronos", f"Chronos-2 が検証窓を予測中（{n_series:,}系列）", 50)
+            write_status(out_dir, "chronos", f"Chronos-2 が検証窓を予測中（{n_series:,}系列）", 55)
             chronos_val = chronos.forecast(
                 split.train, split.val, horizon, prepared.covariates, pipe=pipe
             )
-            write_status(out_dir, "chronos", f"Chronos-2 が提出分を予測中（{n_series:,}系列）", 60)
+            write_status(out_dir, "chronos", f"Chronos-2 が提出分を予測中（{n_series:,}系列）", 63)
             chronos_test = chronos.forecast(
                 labeled, split.future, horizon, prepared.covariates, pipe=pipe
             )
@@ -270,11 +288,11 @@ def run_experiment(prepared: Prepared, out_dir: Path, skip_foundation: bool = Fa
             skipped("chronos2", "Chronos-2", chronos.CHECKPOINT, chronos.ORG, exc)
 
         try:
-            write_status(out_dir, "timesfm", "TimesFM 2.5 を読み込み中", 70)
+            write_status(out_dir, "timesfm", "TimesFM 2.5 を読み込み中", 72)
             model = timesfm.load_model(max_horizon=max(32, horizon))
-            write_status(out_dir, "timesfm", f"TimesFM が検証窓を予測中（{n_series:,}系列）", 75)
+            write_status(out_dir, "timesfm", f"TimesFM が検証窓を予測中（{n_series:,}系列）", 77)
             timesfm_val = timesfm.forecast(split.train, split.val, horizon, model=model)
-            write_status(out_dir, "timesfm", f"TimesFM が提出分を予測中（{n_series:,}系列）", 82)
+            write_status(out_dir, "timesfm", f"TimesFM が提出分を予測中（{n_series:,}系列）", 84)
             timesfm_test = timesfm.forecast(labeled, split.future, horizon, model=model)
             register(
                 "timesfm",

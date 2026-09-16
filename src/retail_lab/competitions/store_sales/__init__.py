@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from retail_lab.competition import Prepared
-from retail_lab.competitions.store_sales import data, features
+from retail_lab.competition import CandidateModel, Prepared
+from retail_lab.competitions.store_sales import data, features, recursive
 from retail_lab.competitions.store_sales.spec import SPEC
 
 __all__ = ["SPEC", "prepare"]
@@ -24,5 +24,17 @@ def prepare(root: Path, source: str) -> Prepared:
         features=features.GBDT_FEATURES,
         categoricals=features.CATEGORICALS,
         covariates=features.CHRONOS_COVARIATES,
+        candidates=[
+            CandidateModel(
+                id="recursive_lgbm",
+                title="再帰 LightGBM（ファミリー別）",
+                note=(
+                    "商品ファミリーごとに学習し、1日ずつ予測を履歴へ戻す。"
+                    "直近1・7・14日の週次リズムを未来漏洩なしで使う。"
+                ),
+                predict=recursive.fit_predict,
+                org="custom",
+            )
+        ],
         extra={"data_dir": str(bundle.data_dir)},
     )

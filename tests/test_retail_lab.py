@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import numpy as np
@@ -295,3 +296,148 @@ def test_explain_api_error_keeps_the_original_message_when_unknown():
     detail = '{"code":500,"message":"Something broke"}'
     message, _hint = explain_api_error(500, detail, "store-sales-time-series-forecasting")
     assert "Something broke" in message
+
+
+def _fake_result(score: float, name: str = "candidate") -> dict:
+    return {
+        "competition": "store-sales",
+        "source": "kaggle",
+        "models": [{"id": "blend", "title": "提出する予測", "status": "ok", "rmsle": score}],
+        "method_version": name,
+    }
+
+
+def test_archive_run_is_immutable_and_listed(tmp_path: Path):
+    from retail_lab.tracking import archive_run, list_runs
+
+    out = tmp_path / "outputs" / "store-sales"
+    out.mkdir(parents=True)
+    (out / "result.json").write_text(json.dumps(_fake_result(0.4)), encoding="utf-8")
+    (out / "submission.csv").write_text("id,sales\n1,1.0\n", encoding="utf-8")
+
+    record = archive_run(out, run_id="run-a", label="baseline")
+
+    assert record["run_id"] == "run-a"
+    assert record["local_rmsle"] == 0.4
+    assert (out / "runs" / "run-a" / "submission.csv").exists()
+    assert list_runs(out)[0]["run_id"] == "run-a"
+    with pytest.raises(FileExistsError):
+        archive_run(out, run_id="run-a", label="overwrite")
+
+
+def test_better_run_becomes_champion_and_worse_run_does_not(tmp_path: Path):
+    from retail_lab.tracking import archive_run, champion, consider_champion
+
+    out = tmp_path / "outputs" / "store-sales"
+    out.mkdir(parents=True)
+
+    for run_id, score in (("run-a", 0.4), ("run-b", 0.38), ("run-c", 0.42)):
+        (out / "result.json").write_text(json.dumps(_fake_result(score, run_id)), encoding="utf-8")
+        (out / "submission.csv").write_text(f"id,sales\n1,{score}\n", encoding="utf-8")
+        archive_run(out, run_id=run_id, label=run_id)
+        consider_champion(out, run_id)
+
+    assert champion(out)["run_id"] == "run-b"
+    restored = json.loads((out / "result.json").read_text(encoding="utf-8"))
+    assert restored["method_version"] == "run-b"
+
+
+def test_tag_and_rollback_restore_an_old_run(tmp_path: Path):
+    from retail_lab.tracking import archive_run, promote_run, tag_run
+
+    out = tmp_path / "outputs" / "store-sales"
+    out.mkdir(parents=True)
+    for run_id, score in (("old", 0.4), ("new", 0.38)):
+        (out / "result.json").write_text(json.dumps(_fake_result(score, run_id)), encoding="utf-8")
+        (out / "submission.csv").write_text(f"id,sales\n1,{score}\n", encoding="utf-8")
+        archive_run(out, run_id=run_id, label=run_id)
+
+    tag_run(out, "safe", "old")
+    promote_run(out, "safe")
+
+    restored = json.loads((out / "result.json").read_text(encoding="utf-8"))
+    assert restored["method_version"] == "old"
+
+
+def test_recursive_forecast_never_reads_future_targets():
+    """検証の正解を値を変えても、予測は変わらない（未来漏洩がない）。"""
+    from retail_lab.competitions.store_sales.recursive import fit_predict
+
+    dates = pd.date_range("2017-01-01", periods=100)
+    train_rows = []
+    future_rows = []
+    row_id = 0
+    for store in (1, 2):
+        for i, date in enumerate(dates):
+            row = {
+                "row_id": row_id,
+                "series_id": f"{store}::A",
+                "date": date,
+                "target": float(10 + store + i % 7),
+                "family": "A",
+                "store_nbr": store,
+                "type": "A",
+                "cluster": store,
+                "onpromotion": 0.0,
+                "promo_log": 0.0,
+                "oil": 50.0,
+                "oil_lag7": 50.0,
+                "dow": date.weekday(),
+                "day": date.day,
+                "month": date.month,
+                "week": int(date.isocalendar().week),
+                "is_weekend": int(date.weekday() >= 5),
+                "is_payday": 0,
+                "is_national_holiday": 0,
+                "is_local_holiday": 0,
+                "is_earthquake": 0,
+                "transactions_lag16": 100.0,
+            }
+            row_id += 1
+            (train_rows if i < 93 else future_rows).append(row)
+    train = pd.DataFrame(train_rows)
+    future = pd.DataFrame(future_rows)
+    changed = future.copy()
+    changed["target"] = 999999.0
+
+    first, _ = fit_predict(train, future, n_estimators=8, context_days=100)
+    second, _ = fit_predict(train, changed, n_estimators=8, context_days=100)
+
+    assert first.sort_values("row_id")["pred"].tolist() == pytest.approx(
+        second.sort_values("row_id")["pred"].tolist()
+    )
+
+
+def test_recursive_forecast_returns_every_row_nonnegative():
+    from retail_lab.competitions.store_sales.recursive import fit_predict
+
+    panel = _panel(days=90, horizon=4)
+    for column, value in {
+        "family": "A",
+        "store_nbr": 1,
+        "type": "A",
+        "cluster": 1,
+        "onpromotion": 0.0,
+        "promo_log": 0.0,
+        "oil": 50.0,
+        "oil_lag7": 50.0,
+        "dow": 1,
+        "day": 1,
+        "month": 1,
+        "week": 1,
+        "is_weekend": 0,
+        "is_payday": 0,
+        "is_national_holiday": 0,
+        "is_local_holiday": 0,
+        "is_earthquake": 0,
+        "transactions_lag16": 100.0,
+    }.items():
+        panel[column] = value
+    split = split_panel(panel, 4)
+
+    prediction, _ = fit_predict(split.train, split.val, n_estimators=8, context_days=100)
+
+    assert len(prediction) == len(split.val)
+    assert prediction["row_id"].is_unique
+    assert prediction["pred"].notna().all()
+    assert (prediction["pred"] >= 0).all()

@@ -30,6 +30,8 @@ GBDT_FEATURES = [
     "is_payday",
     "is_national_holiday",
     "is_local_holiday",
+    "is_earthquake",
+    "transactions_lag16",
     "store_nbr",
     "family",
     "type",
@@ -104,6 +106,25 @@ def build_panel(bundle: Bundle) -> pd.DataFrame:
 
     panel = pd.concat(
         [panel.reset_index(drop=True), _calendar(panel[DATE]).reset_index(drop=True)], axis=1
+    )
+    # 2016-04-16の地震後は支援物資で通常と異なる売上が続いた
+    panel["is_earthquake"] = (
+        (panel[DATE] >= pd.Timestamp("2016-04-16")) & (panel[DATE] <= pd.Timestamp("2016-05-31"))
+    ).astype(int)
+
+    # 取引件数は売上より粗い店舗×日。16日前ならテスト最終日まで利用できる
+    store_days = panel[["store_nbr", DATE]].drop_duplicates().sort_values(["store_nbr", DATE])
+    transactions = store_days.merge(bundle.transactions, on=["store_nbr", DATE], how="left")
+    last_transaction_day = bundle.transactions[DATE].max()
+    historical = transactions[DATE] <= last_transaction_day
+    transactions.loc[historical, "transactions"] = transactions.loc[
+        historical, "transactions"
+    ].fillna(0)
+    transactions["transactions_lag16"] = transactions.groupby("store_nbr")["transactions"].shift(16)
+    panel = panel.merge(
+        transactions[["store_nbr", DATE, "transactions_lag16"]],
+        on=["store_nbr", DATE],
+        how="left",
     )
 
     panel = panel.sort_values([SERIES_ID, DATE]).reset_index(drop=True)
