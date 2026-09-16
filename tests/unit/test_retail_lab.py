@@ -20,6 +20,15 @@ from retail_lab.models import naive
 from retail_lab.validation import split_panel
 
 
+def test_status_percentage_is_always_a_valid_percentage(tmp_path: Path):
+    from retail_lab.status import write_status
+
+    write_status(tmp_path, "too-high", "test", 108)
+    assert json.loads((tmp_path / "status.json").read_text())["pct"] == 100
+    write_status(tmp_path, "too-low", "test", -2)
+    assert json.loads((tmp_path / "status.json").read_text())["pct"] == 0
+
+
 def _panel(days: int = 40, horizon: int = 4) -> pd.DataFrame:
     dates = pd.date_range("2017-01-01", periods=days + horizon)
     rows = []

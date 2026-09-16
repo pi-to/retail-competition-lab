@@ -80,6 +80,7 @@ const SHORT: Record<string, string> = {
   "zero-floor-v1": "小さい予測を0に",
   "hurdle-recursive-v1": "売れるか×いくら",
   "hurdle-diverse-v1": "2段構えを増やす",
+  "direct-intermittent-v1": "積み上げない2段構え",
   "foundation-blend-v1": "最初の提出",
 };
 

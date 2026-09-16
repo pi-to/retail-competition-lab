@@ -251,12 +251,19 @@ def run_experiment(
         {"top_features": importance[:8]},
     )
 
+    candidate_count = max(1, len(prepared.candidates))
     for index, candidate in enumerate(prepared.candidates):
         try:
-            pct = 38 + index * 6
+            # 候補が増えても基盤モデル・混合の進捗帯へ食い込ませない。
+            pct = 34 + int(index * 34 / candidate_count)
             write_status(out_dir, candidate.id, f"{candidate.title} が検証窓を予測中", pct)
             candidate_val, candidate_importance = candidate.predict(split.train, split.val)
-            write_status(out_dir, candidate.id, f"{candidate.title} が提出分を予測中", pct + 4)
+            write_status(
+                out_dir,
+                candidate.id,
+                f"{candidate.title} が提出分を予測中",
+                pct + max(1, int(17 / candidate_count)),
+            )
             candidate_test, _ = candidate.predict(labeled, split.future)
             register(
                 candidate.id,
