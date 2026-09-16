@@ -51,6 +51,15 @@ export type Result = {
 
 export type Status = { step: string; message: string; pct: number };
 
+export type RunError = { message: string; hint?: string };
+
+export type ResultPayload = {
+  result: Result | null;
+  status: Status | null;
+  error: RunError | null;
+  running: boolean;
+};
+
 export type KaggleStatus = {
   competition: string;
   ready: boolean;

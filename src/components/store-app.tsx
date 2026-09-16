@@ -31,55 +31,62 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { CompetitionContent } from "@/lib/competitions";
-import type { KaggleStatus, Result, Status } from "@/lib/types";
+import type { KaggleStatus, Result, ResultPayload, RunError, Status } from "@/lib/types";
 
 export function StoreApp({
   content,
   initialResult,
   initialStatus,
+  initialError,
+  initialRunning,
   kaggleStatus,
 }: {
   content: CompetitionContent;
   initialResult: Result | null;
   initialStatus: Status | null;
+  initialError: RunError | null;
+  initialRunning: boolean;
   kaggleStatus: KaggleStatus;
 }) {
   const [result, setResult] = useState<Result | null>(initialResult);
   const [status, setStatus] = useState<Status | null>(initialStatus);
-  const [running, setRunning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [source, setSource] = useState<"demo" | "kaggle">("demo");
+  const [error, setError] = useState<RunError | null>(initialError);
+  const [running, setRunning] = useState(initialRunning);
+  const [source, setSource] = useState<"demo" | "kaggle">(
+    initialResult?.source === "kaggle" ? "kaggle" : "demo"
+  );
 
-  async function refresh() {
-    const res = await fetch("/api/result", { cache: "no-store" });
-    const data = (await res.json()) as { result: Result | null; status: Status | null };
-    setResult(data.result);
-    setStatus(data.status);
-  }
-
+  /** 実験は別プロセスで走る。画面はファイルに書かれた進捗を読むだけ。 */
   useEffect(() => {
     if (!running) return;
-    const id = setInterval(() => {
-      void refresh();
-    }, 1500);
+    const id = setInterval(async () => {
+      const res = await fetch(`/api/result?competition=${content.slug}`, { cache: "no-store" });
+      if (!res.ok) return;
+      const data = (await res.json()) as ResultPayload;
+      setResult(data.result);
+      setStatus(data.status);
+      setError(data.error);
+      setRunning(data.running);
+    }, 2000);
     return () => clearInterval(id);
-  }, [running]);
+  }, [running, content.slug]);
 
   async function start() {
-    setRunning(true);
     setError(null);
+    setRunning(true);
     try {
       const res = await fetch("/api/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source }),
+        body: JSON.stringify({ source, competition: content.slug }),
       });
-      const data = (await res.json()) as { ok: boolean; error?: string };
-      if (!data.ok) setError(data.error ?? "実行に失敗しました");
-      await refresh();
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setError({ message: data.error ?? "実行を開始できませんでした" });
+        setRunning(false);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "実行に失敗しました");
-    } finally {
+      setError({ message: err instanceof Error ? err.message : "実行を開始できませんでした" });
       setRunning(false);
     }
   }
@@ -165,15 +172,30 @@ export function StoreApp({
                 <a href="/api/submission">submission.csv</a>
               </Button>
             </div>
-            {running || (status && status.step !== "done") ? (
-              <p className="text-sm text-muted-foreground">
-                {status ? `${status.pct}% ${status.message}` : "起動しています"}
-              </p>
+            {running ? (
+              <div className="flex flex-col gap-2">
+                <p className="text-sm text-muted-foreground">
+                  {status ? `${status.pct}% ${status.message}` : "起動しています"}
+                </p>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full bg-primary transition-all"
+                    style={{ width: `${status?.pct ?? 1}%` }}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  別プロセスで走っています。このページを閉じても実験は続き、
+                  戻ってくれば途中から進捗が見えます。
+                </p>
+              </div>
             ) : null}
             {error ? (
               <Alert variant="destructive">
                 <AlertTitle>失敗</AlertTitle>
-                <AlertDescription className="whitespace-pre-wrap">{error}</AlertDescription>
+                <AlertDescription className="whitespace-pre-wrap">
+                  {error.message}
+                  {error.hint ? `\n${error.hint}` : ""}
+                </AlertDescription>
               </Alert>
             ) : null}
           </CardContent>

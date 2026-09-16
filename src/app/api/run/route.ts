@@ -1,45 +1,52 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, open, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { outputDir, runCli } from "@/lib/cli";
+import { spawn } from "node:child_process";
+import { outputDir } from "@/lib/cli";
 import { DEFAULT_COMPETITION } from "@/lib/competitions";
+import { isRunning } from "@/lib/run-state";
 
 export const runtime = "nodejs";
-export const maxDuration = 900;
 
-/** コンペごとに1本だけ走らせる。連打しても同じ実行を待つ。 */
-const running = new Map<string, Promise<void>>();
-
-async function runExperiment(slug: string, source: "demo" | "kaggle") {
+/**
+ * 実験は数十分かかることがあるので、HTTP リクエストの中で待たない。
+ * 起動だけして返し、画面は outputs/<slug>/status.json を読んで進捗を出す。
+ */
+export async function POST(req: Request) {
+  const body = (await req.json().catch(() => ({}))) as { source?: string; competition?: string };
+  const source = body.source === "kaggle" ? "kaggle" : "demo";
+  const slug = body.competition ?? DEFAULT_COMPETITION;
   const out = outputDir(slug);
+
+  if (await isRunning(slug)) {
+    return Response.json({ started: true, alreadyRunning: true, competition: slug, source });
+  }
+
   await mkdir(out, { recursive: true });
+  await rm(path.join(out, "error.json"), { force: true });
   await writeFile(
     path.join(out, "status.json"),
     JSON.stringify({ step: "start", message: "起動しています", pct: 1 }),
     "utf8"
   );
-  const result = await runCli(["--competition", slug, "run", "--source", source]);
-  if (result.code !== 0) {
-    throw new Error(result.stderr.trim() || `実行が失敗しました（終了コード ${result.code}）`);
-  }
-}
 
-export async function POST(req: Request) {
-  const body = (await req.json().catch(() => ({}))) as { source?: string; competition?: string };
-  const source = body.source === "kaggle" ? "kaggle" : "demo";
-  const slug = body.competition ?? DEFAULT_COMPETITION;
-  const key = `${slug}:${source}`;
+  const log = await open(path.join(out, "run.log"), "w");
+  const cwd = process.cwd();
+  const child = spawn(
+    "uv",
+    ["run", "retail-lab", "--root", cwd, "--competition", slug, "run", "--source", source],
+    {
+      cwd,
+      env: {
+        ...process.env,
+        PYTHONUNBUFFERED: "1",
+        PATH: `${process.env.HOME ?? ""}/.local/bin:${process.env.PATH ?? ""}`,
+      },
+      detached: true,
+      stdio: ["ignore", log.fd, log.fd],
+    }
+  );
+  child.unref();
+  await log.close();
 
-  if (!running.has(key)) {
-    running.set(
-      key,
-      runExperiment(slug, source).finally(() => running.delete(key))
-    );
-  }
-  try {
-    await running.get(key);
-    return Response.json({ ok: true, competition: slug, source });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "unknown error";
-    return Response.json({ ok: false, error: message }, { status: 500 });
-  }
+  return Response.json({ started: true, competition: slug, source });
 }

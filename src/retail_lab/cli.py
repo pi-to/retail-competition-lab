@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import traceback
 from pathlib import Path
 
 from retail_lab import kaggle, registry
@@ -66,17 +68,37 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     out = args.out or output_dir(root, spec.slug)
+    return _run(root, spec.slug, args.source, out, skip_foundation=args.skip_foundation)
+
+
+def _run(root: Path, slug: str, source: str, out: Path, skip_foundation: bool) -> int:
+    """実験を1本走らせる。画面はここが書くファイルだけを見る。"""
     out.mkdir(parents=True, exist_ok=True)
+    error_path = out / "error.json"
+    pid_path = out / "run.pid"
+    error_path.unlink(missing_ok=True)
+    pid_path.write_text(str(os.getpid()), encoding="utf-8")
     write_status(out, "load", "データを読み込みます", 5)
-    module = registry.get(spec.slug)
     try:
-        prepared = module.prepare(root, args.source)
+        prepared = registry.get(slug).prepare(root, source)
+        run_experiment(prepared, out, skip_foundation=skip_foundation)
     except kaggle.KaggleError as exc:
-        message = f"{exc} {exc.hint}".strip()
-        print(message, file=sys.stderr)
+        _fail(out, str(exc), exc.hint)
         return 1
-    run_experiment(prepared, out, skip_foundation=args.skip_foundation)
+    except Exception as exc:  # noqa: BLE001 - 画面に出すため必ず受ける
+        _fail(out, f"{type(exc).__name__}: {exc}", "")
+        traceback.print_exc()
+        return 1
+    finally:
+        pid_path.unlink(missing_ok=True)
     return 0
+
+
+def _fail(out: Path, message: str, hint: str) -> None:
+    payload = {"message": message, "hint": hint}
+    (out / "error.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    write_status(out, "failed", message, 100)
+    print(f"{message} {hint}".strip(), file=sys.stderr)
 
 
 if __name__ == "__main__":

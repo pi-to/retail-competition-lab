@@ -5,20 +5,27 @@ import { StoreApp } from "@/components/store-app";
 import { Separator } from "@/components/ui/separator";
 import { DEFAULT_COMPETITION, getCompetition } from "@/lib/competitions";
 import { readKaggleStatus } from "@/lib/kaggle-status";
-import type { Result, Status } from "@/lib/types";
+import { isRunning } from "@/lib/run-state";
+import type { Result, RunError, Status } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 async function loadInitial(slug: string) {
   const out = path.join(process.cwd(), "outputs", slug);
-  const [result, status] = await Promise.all([
-    readFile(path.join(out, "result.json"), "utf8").catch(() => null),
-    readFile(path.join(out, "status.json"), "utf8").catch(() => null),
-  ]);
-  return {
-    result: result ? (JSON.parse(result) as Result) : null,
-    status: status ? (JSON.parse(status) as Status) : null,
+  const read = async <T,>(name: string): Promise<T | null> => {
+    try {
+      return JSON.parse(await readFile(path.join(out, name), "utf8")) as T;
+    } catch {
+      return null;
+    }
   };
+  const [result, status, error, running] = await Promise.all([
+    read<Result>("result.json"),
+    read<Status>("status.json"),
+    read<RunError>("error.json"),
+    isRunning(slug),
+  ]);
+  return { result, status, error, running };
 }
 
 export default async function Home() {
@@ -35,6 +42,8 @@ export default async function Home() {
         content={content}
         initialResult={initial.result}
         initialStatus={initial.status}
+        initialError={initial.error}
+        initialRunning={initial.running}
         kaggleStatus={kaggleStatus}
       />
       <Separator />

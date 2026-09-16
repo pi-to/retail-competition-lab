@@ -246,14 +246,22 @@ def run_experiment(prepared: Prepared, out_dir: Path, skip_foundation: bool = Fa
 
     if not skip_foundation:
         try:
-            write_status(out_dir, "chronos", "Amazon Chronos-2（共変量つきゼロショット）", 50)
+            write_status(out_dir, "chronos", "Chronos-2 を読み込み中", 45)
             pipe = chronos.load_pipeline()
+            write_status(out_dir, "chronos", f"Chronos-2 が検証窓を予測中（{n_series:,}系列）", 50)
+            chronos_val = chronos.forecast(
+                split.train, split.val, horizon, prepared.covariates, pipe=pipe
+            )
+            write_status(out_dir, "chronos", f"Chronos-2 が提出分を予測中（{n_series:,}系列）", 60)
+            chronos_test = chronos.forecast(
+                labeled, split.future, horizon, prepared.covariates, pipe=pipe
+            )
             register(
                 "chronos2",
                 "Chronos-2",
                 "AWS の時系列基盤モデル。数量の系列に、未来に分かる列を添えて渡す。学習しない。",
-                chronos.forecast(split.train, split.val, horizon, prepared.covariates, pipe=pipe),
-                chronos.forecast(labeled, split.future, horizon, prepared.covariates, pipe=pipe),
+                chronos_val,
+                chronos_test,
                 {"checkpoint": chronos.CHECKPOINT, "org": chronos.ORG},
             )
             del pipe
@@ -261,14 +269,18 @@ def run_experiment(prepared: Prepared, out_dir: Path, skip_foundation: bool = Fa
             skipped("chronos2", "Chronos-2", chronos.CHECKPOINT, chronos.ORG, exc)
 
         try:
-            write_status(out_dir, "timesfm", "Google TimesFM 2.5（単変量ゼロショット）", 75)
+            write_status(out_dir, "timesfm", "TimesFM 2.5 を読み込み中", 70)
             model = timesfm.load_model(max_horizon=max(32, horizon))
+            write_status(out_dir, "timesfm", f"TimesFM が検証窓を予測中（{n_series:,}系列）", 75)
+            timesfm_val = timesfm.forecast(split.train, split.val, horizon, model=model)
+            write_status(out_dir, "timesfm", f"TimesFM が提出分を予測中（{n_series:,}系列）", 82)
+            timesfm_test = timesfm.forecast(labeled, split.future, horizon, model=model)
             register(
                 "timesfm",
                 "TimesFM 2.5",
                 "Google の時系列基盤モデル。数量の並びだけを読む。AWS に依存しない対照実験。",
-                timesfm.forecast(split.train, split.val, horizon, model=model),
-                timesfm.forecast(labeled, split.future, horizon, model=model),
+                timesfm_val,
+                timesfm_test,
                 {"checkpoint": timesfm.CHECKPOINT, "org": timesfm.ORG},
             )
             del model

@@ -12,6 +12,9 @@ from retail_lab import DATE, ROW_ID, SERIES_ID, TARGET
 CHECKPOINT = "amazon/chronos-2"
 ORG = "Amazon"
 OUTPUT_COLUMNS = [ROW_ID, DATE, SERIES_ID, "pred"]
+# 推論時間は文脈の長さにほぼ比例する。CPU で現実的に回る長さに切る。
+# 週・給料日・祝日の周期は1年半あれば読める。
+MAX_CONTEXT_DAYS = 540
 
 
 def load_pipeline(checkpoint: str = CHECKPOINT, device: str = "cpu") -> Any:
@@ -33,6 +36,8 @@ def forecast(
     if pipe is None:
         pipe = load_pipeline()
 
+    cutoff = history[DATE].max() - pd.Timedelta(days=MAX_CONTEXT_DAYS)
+    history = history[history[DATE] > cutoff]
     context = history[[SERIES_ID, DATE, TARGET, *covariates]].rename(
         columns={SERIES_ID: "id", DATE: "timestamp", TARGET: "target"}
     )
