@@ -362,6 +362,9 @@ def run_experiment(
     strategy = str(choice["strategy"])
     zero_window = int(choice["zero_window"])
     small_floor = float(choice.get("small_floor", 0.0))
+    family_calibrate = bool(choice.get("family_calibrate", False))
+    family_calibrate_shrink = float(choice.get("family_calibrate_shrink", 1.0))
+    family_scales = {str(k): float(v) for k, v in (choice.get("family_scales") or {}).items()}
     val_blend = choice["val"]
     test_blend = choice["test"]
     weights: dict[str, float] = choice["weights"]
@@ -393,6 +396,11 @@ def run_experiment(
         else "ゼロ系列の後処理は、検証窓で悪化したので使わない。"
     )
     floor_note = f"予測が{small_floor:g}未満の行は0にした。" if small_floor else ""
+    calibrate_note = (
+        f"売り場ごとにlog予測を{family_calibrate_shrink:g}寄せで倍率補正した。"
+        if family_calibrate
+        else ""
+    )
     shrink_note = (
         f"ファミリー別の重みは全体へ{(1 - alpha) * 100:.0f}%寄せた。" if alpha < 1.0 else ""
     )
@@ -400,7 +408,7 @@ def run_experiment(
         {
             "id": "blend",
             "title": "提出する予測",
-            "note": f"{notes[strategy]}{shrink_note}{zero_note}{floor_note}",
+            "note": f"{notes[strategy]}{shrink_note}{zero_note}{floor_note}{calibrate_note}",
             "rmsle": round(best_score, 5),
             "holdout_rmsle": (
                 round(float(holdout_score), 5) if holdout_score is not None else None
@@ -412,6 +420,9 @@ def run_experiment(
             "strategy": strategy,
             "zero_window": zero_window,
             "small_floor": round(small_floor, 3),
+            "family_calibrate": family_calibrate,
+            "family_calibrate_shrink": round(family_calibrate_shrink, 3),
+            "family_scales": {k: round(v, 4) for k, v in family_scales.items()},
             "weights": {k: round(v, 4) for k, v in weights.items()},
             "weights_by_horizon": (
                 {
@@ -535,6 +546,9 @@ def reblend_cached(prepared: Prepared, out_dir: Path, source_run: Path) -> JsonD
     strategy = str(choice["strategy"])
     zero_window = int(choice["zero_window"])
     small_floor = float(choice.get("small_floor", 0.0))
+    family_calibrate = bool(choice.get("family_calibrate", False))
+    family_calibrate_shrink = float(choice.get("family_calibrate_shrink", 1.0))
+    family_scales = {str(k): float(v) for k, v in (choice.get("family_scales") or {}).items()}
     val_blend = choice["val"]
     test_blend = choice["test"]
     weights: dict[str, float] = choice["weights"]
@@ -580,6 +594,11 @@ def reblend_cached(prepared: Prepared, out_dir: Path, source_run: Path) -> JsonD
         else "ゼロ系列の後処理は、検証窓で悪化したので使わない。"
     )
     floor_note = f"予測が{small_floor:g}未満の行は0にした。" if small_floor else ""
+    calibrate_note = (
+        f"売り場ごとにlog予測を{family_calibrate_shrink:g}寄せで倍率補正した。"
+        if family_calibrate
+        else ""
+    )
     shrink_note = (
         f"ファミリー別の重みは全体へ{(1 - alpha) * 100:.0f}%寄せた。" if alpha < 1.0 else ""
     )
@@ -587,7 +606,7 @@ def reblend_cached(prepared: Prepared, out_dir: Path, source_run: Path) -> JsonD
         {
             "id": "blend",
             "title": "提出する予測",
-            "note": f"{notes[strategy]}{shrink_note}{zero_note}{floor_note}",
+            "note": f"{notes[strategy]}{shrink_note}{zero_note}{floor_note}{calibrate_note}",
             "rmsle": round(best_score, 5),
             "holdout_rmsle": (
                 round(float(holdout_score), 5) if holdout_score is not None else None
@@ -599,6 +618,9 @@ def reblend_cached(prepared: Prepared, out_dir: Path, source_run: Path) -> JsonD
             "strategy": strategy,
             "zero_window": zero_window,
             "small_floor": round(small_floor, 3),
+            "family_calibrate": family_calibrate,
+            "family_calibrate_shrink": round(family_calibrate_shrink, 3),
+            "family_scales": {k: round(v, 4) for k, v in family_scales.items()},
             "weights": {k: round(v, 4) for k, v in weights.items()},
             "weights_by_horizon": (
                 {

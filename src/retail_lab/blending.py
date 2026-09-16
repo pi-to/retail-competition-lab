@@ -249,6 +249,47 @@ def snap_small_to_zero(pred: pd.DataFrame, threshold: float) -> pd.DataFrame:
     return out
 
 
+def fit_family_log_scales(
+    pred: pd.DataFrame, actual: pd.DataFrame, *, shrink: float = 1.0
+) -> dict[str, float]:
+    """売り場ごとに log1p 予測の倍率を当てる。1 なら補正なし。
+
+    LINGERIE のように売れた日を小さく見がちな系統を、見ていない店で測って持ち上げる。
+    """
+    sample = pred.copy()
+    sample["_family"] = _family_of(sample)
+    merged = sample.merge(actual[[ROW_ID, TARGET]], on=ROW_ID, how="inner")
+    scales: dict[str, float] = {}
+    for family, part in merged.groupby("_family"):
+        if part.empty or pd.isna(family):
+            continue
+        log_pred = np.log1p(part[PRED].clip(lower=0).to_numpy())
+        log_actual = np.log1p(part[TARGET].clip(lower=0).to_numpy())
+        denom = float(np.dot(log_pred, log_pred))
+        if denom <= 1e-12:
+            scales[str(family)] = 1.0
+            continue
+        raw = float(np.dot(log_pred, log_actual) / denom)
+        raw = float(np.clip(raw, 0.5, 1.5))
+        scales[str(family)] = shrink * raw + (1.0 - shrink) * 1.0
+    return scales
+
+
+def apply_family_log_scales(pred: pd.DataFrame, scales: dict[str, float]) -> pd.DataFrame:
+    if not scales:
+        return pred
+    out = pred.copy()
+    families = _family_of(out)
+    scaled = out[PRED].to_numpy(dtype=float).copy()
+    for family, scale in scales.items():
+        if abs(scale - 1.0) < 1e-12:
+            continue
+        mask = families.to_numpy() == family
+        scaled[mask] = np.expm1(np.log1p(np.clip(scaled[mask], 0, None)) * scale)
+    out[PRED] = np.clip(scaled, 0, None)
+    return out
+
+
 def _fit_plan(
     strategy: str,
     pred_map: dict[str, pd.DataFrame],
@@ -317,6 +358,9 @@ def _two_fold_score(
     train: pd.DataFrame,
     window: int,
     floor: float = 0.0,
+    *,
+    calibrate: bool = False,
+    calibrate_shrink: float = 1.0,
 ) -> float:
     """片側で重みを当てはめ、もう片側で採点する。両方向やって平均する。"""
     left, right = halves
@@ -325,9 +369,16 @@ def _two_fold_score(
         fit_actual = val[val[ROW_ID].isin(fit_ids)]
         hold_actual = val[val[ROW_ID].isin(hold_ids)]
         plan = _fit_plan(strategy, _subset(pred_map, fit_ids), fit_actual, alpha)
-        raw = _apply_plan(plan, _subset(pred_map, hold_ids))
-        candidate = zero_out_dead_series(train, raw, window) if window else raw
-        total += score_against(snap_small_to_zero(candidate, floor), hold_actual)
+        fit_raw = _apply_plan(plan, _subset(pred_map, fit_ids))
+        hold_raw = _apply_plan(plan, _subset(pred_map, hold_ids))
+        fit_candidate = zero_out_dead_series(train, fit_raw, window) if window else fit_raw
+        hold_candidate = zero_out_dead_series(train, hold_raw, window) if window else hold_raw
+        fit_candidate = snap_small_to_zero(fit_candidate, floor)
+        hold_candidate = snap_small_to_zero(hold_candidate, floor)
+        if calibrate:
+            scales = fit_family_log_scales(fit_candidate, fit_actual, shrink=calibrate_shrink)
+            hold_candidate = apply_family_log_scales(hold_candidate, scales)
+        total += score_against(hold_candidate, hold_actual)
     return total / 2.0
 
 
@@ -422,6 +473,9 @@ def choose_blend(
     used = sorted(val_preds)
     holdout_score: float | None = None
     floor = 0.0
+    calibrate = False
+    calibrate_shrink = 1.0
+    family_scales: dict[str, float] = {}
     if honest_ok:
         used, holdout_score = _drop_models_that_do_not_earn_their_place(
             val_preds, val, halves, strategy, alpha, train, window
@@ -445,6 +499,26 @@ def choose_blend(
             if value < holdout_score - 1e-9:
                 holdout_score = value
                 floor = floor_option
+        for shrink in (0.5, 0.85, 1.0):
+            try:
+                value = _two_fold_score(
+                    kept,
+                    val,
+                    halves,
+                    strategy,
+                    alpha,
+                    train,
+                    window,
+                    floor,
+                    calibrate=True,
+                    calibrate_shrink=shrink,
+                )
+            except (ValueError, KeyError):
+                continue
+            if value < holdout_score - 1e-9:
+                holdout_score = value
+                calibrate = True
+                calibrate_shrink = shrink
 
     val_used = {name: val_preds[name] for name in used}
     test_used = {name: test_preds[name] for name in used}
@@ -455,12 +529,19 @@ def choose_blend(
     test_blend = zero_out_dead_series(labeled, test_raw, window) if window else test_raw
     val_blend = snap_small_to_zero(val_blend, floor)
     test_blend = snap_small_to_zero(test_blend, floor)
+    if calibrate:
+        family_scales = fit_family_log_scales(val_blend, val, shrink=calibrate_shrink)
+        val_blend = apply_family_log_scales(val_blend, family_scales)
+        test_blend = apply_family_log_scales(test_blend, family_scales)
 
     return {
         "strategy": strategy,
         "alpha": alpha,
         "zero_window": window,
         "small_floor": floor,
+        "family_calibrate": calibrate,
+        "family_calibrate_shrink": calibrate_shrink,
+        "family_scales": family_scales,
         "val": val_blend,
         "test": test_blend,
         "weights": _mean_weights(plan, used),

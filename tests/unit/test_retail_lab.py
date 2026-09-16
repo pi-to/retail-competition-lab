@@ -1087,6 +1087,31 @@ def test_snap_small_to_zero_only_touches_rows_under_the_threshold():
     assert blending.snap_small_to_zero(pred, 0.0)["pred"].tolist() == [0.0, 0.2, 1.5]
 
 
+def test_family_log_scales_lift_underpredicted_families():
+    from retail_lab import blending
+
+    pred = pd.DataFrame(
+        {
+            "row_id": [1, 2, 3, 4],
+            "series_id": ["1::LINGERIE", "2::LINGERIE", "1::BREAD", "2::BREAD"],
+            "date": pd.Timestamp("2017-01-01"),
+            "pred": [2.0, 2.0, 5.0, 5.0],
+        }
+    )
+    actual = pd.DataFrame(
+        {
+            "row_id": [1, 2, 3, 4],
+            "target": [4.0, 4.0, 5.0, 5.0],
+        }
+    )
+    scales = blending.fit_family_log_scales(pred, actual)
+    assert scales["LINGERIE"] > 1.0
+    assert scales["BREAD"] == pytest.approx(1.0, abs=0.05)
+    scaled = blending.apply_family_log_scales(pred, {"LINGERIE": 1.2, "BREAD": 1.0})
+    assert scaled.loc[0, "pred"] > pred.loc[0, "pred"]
+    assert scaled.loc[2, "pred"] == pytest.approx(5.0)
+
+
 def test_choose_blend_reports_the_small_prediction_floor_it_selected():
     """しきい値は、重みを当てはめていない系列での採点で選ぶ。"""
     from retail_lab import blending
