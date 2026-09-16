@@ -9,7 +9,7 @@ from functools import partial
 from pathlib import Path
 
 from retail_lab.competition import CandidateModel, Prepared
-from retail_lab.competitions.store_sales import data, direct, features, recursive
+from retail_lab.competitions.store_sales import data, direct, features, recursive, statistical
 from retail_lab.competitions.store_sales.spec import SPEC
 
 __all__ = ["SPEC", "prepare"]
@@ -248,6 +248,26 @@ def prepare(root: Path, source: str) -> Prepared:
                     "その店が売り場平均より強いか弱いかを足す。"
                 ),
                 predict=partial(direct.fit_predict, intermittent=True, peer_context=True),
+                org="custom",
+            ),
+            CandidateModel(
+                id="tsb_intermittent",
+                title="TSB（売れる頻度 × 売れたときの量）",
+                note=(
+                    "木を使わない古典手法。売れない日にも頻度だけを下げるので、"
+                    "下着売り場のようにゼロが続く棚を0に潰さず控えめに出す。"
+                ),
+                predict=statistical.tsb_fit_predict,
+                org="custom",
+            ),
+            CandidateModel(
+                id="dow_index_level",
+                title="直近の水準 × 売り場の曜日のクセ",
+                note=(
+                    "直近28日の平均に、売り場ごとの曜日比を掛けるだけ。"
+                    "特徴量を持たないぶん、機械学習とは違う行で外れる。"
+                ),
+                predict=statistical.dow_index_fit_predict,
                 org="custom",
             ),
             CandidateModel(

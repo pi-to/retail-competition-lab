@@ -649,6 +649,86 @@ def test_tag_and_rollback_restore_an_old_run(tmp_path: Path):
     assert restored["method_version"] == "old"
 
 
+def _sparse_panel(days: int = 150, horizon: int = 16) -> pd.DataFrame:
+    """売れない日が多い棚を模した2系列。統計手法のテスト用。"""
+    dates = pd.date_range("2017-01-01", periods=days + horizon)
+    rows = []
+    row_id = 0
+    for store, every in ((1, 5), (2, 3)):
+        for i, date in enumerate(dates):
+            sells = i % every == 0
+            rows.append(
+                {
+                    "row_id": row_id,
+                    "series_id": f"{store}::A",
+                    "date": date,
+                    "target": float(4 + store) if sells else 0.0,
+                    "family": "A",
+                }
+            )
+            row_id += 1
+    panel = pd.DataFrame(rows)
+    panel.loc[panel["date"] > dates[days - 1], "target"] = np.nan
+    return panel
+
+
+def test_tsb_forecast_is_between_zero_and_the_sale_size():
+    """TSB は「売れる頻度 × 売れたときの量」なので、0と1回の量の間に収まる。"""
+    from retail_lab.competitions.store_sales.statistical import tsb_fit_predict
+
+    panel = _sparse_panel()
+    split = split_panel(panel, 16)
+    changed = split.val.copy()
+    changed["target"] = 999999.0
+
+    first, ranked = tsb_fit_predict(split.train, split.val)
+    second, _ = tsb_fit_predict(split.train, changed)
+
+    assert first.sort_values("row_id")["pred"].tolist() == pytest.approx(
+        second.sort_values("row_id")["pred"].tolist()
+    )
+    assert len(first) == len(split.val)
+    assert (first["pred"] >= 0).all()
+    # 5日に1回 5 個の棚は、平滑しても1回分の量を超えない
+    store_one = first[first["series_id"] == "1::A"]["pred"]
+    assert (store_one > 0).all()
+    assert (store_one < 5.0).all()
+    assert {str(item["feature"]) for item in ranked} >= {"tsb_probability_x_size"}
+
+
+def test_dow_index_forecast_uses_only_history_and_covers_every_row():
+    from retail_lab.competitions.store_sales.statistical import dow_index_fit_predict
+
+    panel = _sparse_panel()
+    split = split_panel(panel, 16)
+    changed = split.val.copy()
+    changed["target"] = 999999.0
+
+    first, _ = dow_index_fit_predict(split.train, split.val)
+    second, _ = dow_index_fit_predict(split.train, changed)
+
+    assert first.sort_values("row_id")["pred"].tolist() == pytest.approx(
+        second.sort_values("row_id")["pred"].tolist()
+    )
+    assert len(first) == len(split.val)
+    assert (first["pred"] >= 0).all()
+    assert set(first.columns) == {"row_id", "date", "series_id", "pred"}
+
+
+def test_dow_index_keeps_a_series_with_no_recent_history_at_zero():
+    from retail_lab.competitions.store_sales.statistical import dow_index_fit_predict
+
+    panel = _sparse_panel()
+    split = split_panel(panel, 16)
+    train = split.train[split.train["series_id"] == "1::A"]
+
+    out, _ = dow_index_fit_predict(train, split.val)
+
+    missing = out[out["series_id"] == "2::A"]["pred"]
+    assert len(missing) > 0
+    assert (missing == 0.0).all()
+
+
 def test_recursive_forecast_never_reads_future_targets():
     """検証の正解を値を変えても、予測は変わらない（未来漏洩がない）。"""
     from retail_lab.competitions.store_sales.recursive import fit_predict
