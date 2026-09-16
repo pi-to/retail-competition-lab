@@ -10,7 +10,7 @@ import traceback
 from pathlib import Path
 
 from retail_lab import kaggle, registry
-from retail_lab.competition import data_dir, output_dir
+from retail_lab.competition import data_dir, output_dir, run_output_dir
 from retail_lab.experiment import run_experiment
 from retail_lab.status import write_status
 
@@ -75,10 +75,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "preflight":
+        out = output_dir(root, spec.slug)
         state = kaggle.check_submit_access(
             root=root,
             slug=spec.kaggle_slug,
-            submission=output_dir(root, spec.slug) / "submission.csv",
+            submission=out / "submission.csv",
+        )
+        state["file"] = kaggle.describe_submission(
+            out / "submission.csv",
+            data_dir(root, spec.slug, "kaggle") / "sample_submission.csv",
         )
         print(json.dumps(state, ensure_ascii=False, indent=2))
         return 0 if state["ok"] else 1
@@ -119,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(receipt, ensure_ascii=False, indent=2))
         return 0
 
-    out = args.out or output_dir(root, spec.slug)
+    out = args.out or run_output_dir(root, spec.slug, args.source)
     return _run(root, spec.slug, args.source, out, skip_foundation=args.skip_foundation)
 
 

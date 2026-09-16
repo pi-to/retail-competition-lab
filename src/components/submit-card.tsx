@@ -37,12 +37,23 @@ type Receipt = {
   description: string;
 };
 
+type SubmissionFacts = {
+  valid: boolean;
+  message?: string;
+  rows?: number;
+  lines?: number;
+  header?: string;
+  id_min?: number;
+  id_max?: number;
+};
+
 type Preflight = {
   ok: boolean;
   message: string;
   hint?: string;
   account?: string | null;
   entered?: boolean | null;
+  file?: SubmissionFacts;
 };
 
 export function SubmitCard({ result }: { result: Result }) {
@@ -307,6 +318,20 @@ export function SubmitCard({ result }: { result: Result }) {
 
             {checking ? (
               <p className="text-sm text-muted-foreground">提出できる状態か確認しています…</p>
+            ) : null}
+            {preflight?.file?.valid ? (
+              <p className="text-sm text-muted-foreground">
+                ファイルの形：ヘッダー <code>{preflight.file.header}</code> 1行 ＋ データ{" "}
+                {preflight.file.rows?.toLocaleString()} 行（合計{" "}
+                {preflight.file.lines?.toLocaleString()} 行）。id は {preflight.file.id_min}〜
+                {preflight.file.id_max} で公式の sample_submission.csv と完全一致。
+              </p>
+            ) : null}
+            {preflight?.file && !preflight.file.valid ? (
+              <Alert variant="destructive">
+                <AlertTitle>提出ファイルに問題があります</AlertTitle>
+                <AlertDescription>{preflight.file.message}</AlertDescription>
+              </Alert>
             ) : null}
             {preflight && !preflight.ok ? (
               <Alert variant="destructive">

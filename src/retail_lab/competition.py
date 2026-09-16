@@ -54,3 +54,9 @@ def data_dir(root: Path, slug: str, source: str) -> Path:
 
 def output_dir(root: Path, slug: str) -> Path:
     return root / "outputs" / slug
+
+
+def run_output_dir(root: Path, slug: str, source: str) -> Path:
+    """デモの結果は別置きにする。提出用CSVをデモ実行で潰さないため。"""
+    base = output_dir(root, slug)
+    return base if source == "kaggle" else base / source

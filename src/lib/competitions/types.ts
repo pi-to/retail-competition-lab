@@ -22,6 +22,12 @@ export type CompetitionContent = {
   scoreGuide: { score: string; label: string; factor: string }[];
   scoreNote: string;
   approach: { title: string; body: string }[];
+  submissions: {
+    date: string;
+    leaderboard: number;
+    localRmsle: number;
+    method: string;
+  }[];
   nextSteps: string[];
   demoNote: string;
 };

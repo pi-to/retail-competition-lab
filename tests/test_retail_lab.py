@@ -5,10 +5,11 @@ import pandas as pd
 import pytest
 
 from retail_lab import blending, registry
-from retail_lab.competition import CompetitionSpec
+from retail_lab.competition import CompetitionSpec, run_output_dir
 from retail_lab.kaggle import (
     SubmissionValidationError,
     auth_header,
+    describe_submission,
     explain_api_error,
     readiness_blockers,
     validate_submission,
@@ -246,6 +247,28 @@ def test_auth_header_prefers_the_process_environment(
     (tmp_path / ".env.local").write_text("KAGGLE_API_TOKEN=KGAT_from_file\n", encoding="utf-8")
 
     assert auth_header(tmp_path) == {"Authorization": "Bearer KGAT_from_env"}
+
+
+def test_demo_runs_do_not_overwrite_the_official_submission(tmp_path: Path):
+    official = run_output_dir(tmp_path, "store-sales", "kaggle")
+    demo = run_output_dir(tmp_path, "store-sales", "demo")
+    assert official == tmp_path / "outputs" / "store-sales"
+    assert demo != official
+    assert official in demo.parents
+
+
+def test_describe_submission_counts_the_header_separately(tmp_path: Path):
+    sample = tmp_path / "sample_submission.csv"
+    submission = tmp_path / "submission.csv"
+    pd.DataFrame({"id": [1, 2, 3], "sales": [0.0, 0.0, 0.0]}).to_csv(sample, index=False)
+    pd.DataFrame({"id": [1, 2, 3], "sales": [1.0, 2.0, 3.0]}).to_csv(submission, index=False)
+
+    facts = describe_submission(submission, sample)
+
+    assert facts["valid"] is True
+    assert facts["rows"] == 3
+    assert facts["lines"] == 4
+    assert facts["header"] == "id,sales"
 
 
 def test_readiness_names_the_account_that_has_not_joined():

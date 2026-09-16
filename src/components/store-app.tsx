@@ -191,6 +191,46 @@ export function StoreApp({
         <>
           <section className="flex flex-col gap-3">
             <SectionTitle title="提出" sub="検証済みの予測をKaggleへ送る" />
+            {content.submissions.length > 0 ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>提出の記録</CardTitle>
+                  <CardDescription>
+                    ローカル検証と公開リーダーボードの差が小さいほど、検証が信用できる。
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>日付</TableHead>
+                          <TableHead className="text-right">公開LB</TableHead>
+                          <TableHead className="text-right">ローカル検証</TableHead>
+                          <TableHead>作り方</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {content.submissions.map((entry) => (
+                          <TableRow key={entry.date}>
+                            <TableCell className="font-mono">{entry.date}</TableCell>
+                            <TableCell className="text-right font-mono font-medium">
+                              {entry.leaderboard.toFixed(5)}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-muted-foreground">
+                              {entry.localRmsle.toFixed(4)}
+                            </TableCell>
+                            <TableCell className="min-w-64 text-muted-foreground">
+                              {entry.method}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : null}
             <SubmitCard result={result} />
           </section>
 

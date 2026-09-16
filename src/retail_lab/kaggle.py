@@ -299,6 +299,23 @@ def readiness_blockers(account: str | None, info: dict[str, Any] | None, slug: s
     return blockers
 
 
+def describe_submission(submission: Path, sample: Path) -> dict[str, Any]:
+    """提出ファイルの形を、そのまま画面に出せる形で返す。"""
+    try:
+        facts = validate_submission(submission, sample)
+    except KaggleError as exc:
+        return {"valid": False, "message": f"{exc} {exc.hint}".strip()}
+    return {
+        "valid": True,
+        "rows": facts["rows"],
+        "lines": int(facts["rows"]) + 1,
+        "header": "id,sales",
+        "id_min": facts["id_min"],
+        "id_max": facts["id_max"],
+        "sales_max": round(float(facts["sales_max"]), 2),
+    }
+
+
 def check_submit_access(root: Path, slug: str, submission: Path) -> dict[str, Any]:
     """提出の1段目だけを試し、権限と参加状態を先に確かめる。
 

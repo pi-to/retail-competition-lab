@@ -135,6 +135,14 @@ const storeSales: CompetitionContent = {
       body: "log 空間で非負の重みを当てる（指標が log だから）。それが単体一位に勝てなければ、混ぜずに単体を出す。人が勘で重みを決めない。",
     },
   ],
+  submissions: [
+    {
+      date: "2026-09-16",
+      leaderboard: 0.39515,
+      localRmsle: 0.4,
+      method: "Chronos-2 74% + LightGBM 26%（log空間で重みを当てはめ、ゼロ系列の後処理なし）",
+    },
+  ],
   nextSteps: [
     "商品ファミリーごとに別のモデルを建てる。",
     "予測を1日ずつ前に進めて、7日前などの近いラグを使えるようにする。",
