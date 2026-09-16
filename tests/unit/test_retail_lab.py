@@ -971,6 +971,64 @@ def test_direct_family_trend_forecast_never_reads_future_targets():
     assert {str(item["feature"]) for item in ranked} >= {"family_level_ratio_7_56"}
 
 
+def test_direct_peer_context_never_reads_future_targets_and_uses_local_peers():
+    from retail_lab.competitions.store_sales.direct import fit_predict
+
+    panel = _panel(days=120, horizon=4)
+    # 2系列を同じ売り場・別クラスターに置く
+    panel.loc[panel["series_id"] == "1::A", ["family", "store_nbr", "cluster", "city"]] = [
+        "A",
+        1,
+        1,
+        "Quito",
+    ]
+    panel.loc[
+        panel["series_id"] == "2::B", ["family", "store_nbr", "cluster", "city", "series_id"]
+    ] = [
+        "A",
+        2,
+        2,
+        "Guayaquil",
+        "2::A",
+    ]
+    for column, value in {
+        "type": "A",
+        "onpromotion": 0.0,
+        "promo_log": 0.0,
+        "oil": 50.0,
+        "oil_lag7": 50.0,
+        "dow": 1,
+        "day": 1,
+        "month": 1,
+        "week": 1,
+        "is_weekend": 0,
+        "is_payday": 0,
+        "is_national_holiday": 0,
+        "is_local_holiday": 0,
+        "is_earthquake": 0,
+        "transactions_lag16": 100.0,
+        **EXOG_DEFAULTS,
+    }.items():
+        panel[column] = value
+    split = split_panel(panel, 4)
+    changed = split.val.copy()
+    changed["target"] = 999999.0
+    kwargs = {
+        "n_estimators": 8,
+        "context_days": 120,
+        "intermittent": True,
+        "peer_context": True,
+    }
+    first, ranked = fit_predict(split.train, split.val, **kwargs)
+    second, _ = fit_predict(split.train, changed, **kwargs)
+
+    assert first.sort_values("row_id")["pred"].tolist() == pytest.approx(
+        second.sort_values("row_id")["pred"].tolist()
+    )
+    names = {str(item["feature"]) for item in ranked}
+    assert names >= {"cluster_family_mean_7", "city_family_mean_7", "store_to_family_ratio_28"}
+
+
 def test_recursive_drop_earthquake_does_not_read_future_targets():
     from retail_lab.competitions.store_sales.recursive import fit_predict
 

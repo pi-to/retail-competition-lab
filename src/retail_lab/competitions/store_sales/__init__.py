@@ -211,6 +211,31 @@ def prepare(root: Path, source: str) -> Prepared:
                 ),
                 org="custom",
             ),
+            CandidateModel(
+                id="direct_peer_context",
+                title="予測距離別 LightGBM（地域・同業店の勢い）",
+                note=(
+                    "同じクラスター・同じ都市の同売り場の勢いと、"
+                    "その店が売り場平均より強いか弱いかを足す。"
+                ),
+                predict=partial(direct.fit_predict, intermittent=True, peer_context=True),
+                org="custom",
+            ),
+            CandidateModel(
+                id="direct_peer_hurdle",
+                title="予測距離別 LightGBM（地域の勢い × 2段構え）",
+                note=(
+                    "地域・同業店の勢いを見ながら、売れる確率と量を分けて学ぶ。"
+                    "下着売り場や小さめ食料品で、店ごとの差を拾う。"
+                ),
+                predict=partial(
+                    direct.fit_predict,
+                    intermittent=True,
+                    hurdle=True,
+                    peer_context=True,
+                ),
+                org="custom",
+            ),
         ],
         extra={"data_dir": str(bundle.data_dir)},
     )

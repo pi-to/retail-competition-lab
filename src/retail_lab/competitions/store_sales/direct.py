@@ -34,7 +34,15 @@ FAMILY_TREND_FEATURES = [
     "family_level_ratio_7_56",
     "family_same_dow_4",
 ]
+PEER_FEATURES = [
+    "cluster_family_mean_7",
+    "cluster_family_level_ratio_7_56",
+    "city_family_mean_7",
+    "city_family_level_ratio_7_56",
+    "store_to_family_ratio_28",
+]
 FAMILY_TREND_DIRECT = [*INTERMITTENT_DIRECT, *FAMILY_TREND_FEATURES]
+PEER_CONTEXT_DIRECT = [*FAMILY_TREND_DIRECT, *PEER_FEATURES]
 CATEGORICALS = ["store_nbr", "type", "cluster", "family"]
 OUTPUT = [ROW_ID, DATE, SERIES_ID, "pred"]
 
@@ -158,38 +166,85 @@ def _attach_intermittent(
     return out
 
 
-def _family_states(frame: pd.DataFrame) -> pd.DataFrame:
-    """各売り場の全店舗平均から、共通する直近の勢いを日ごとに作る。"""
+def _rolling_group_states(
+    frame: pd.DataFrame,
+    keys: list[str],
+    prefix: str,
+) -> pd.DataFrame:
+    """グループの日次平均から、直近の勢いを日ごとに作る。"""
+    mean_7 = f"{prefix}_mean_7"
+    mean_28 = f"{prefix}_mean_28"
+    ratio = f"{prefix}_level_ratio_7_56"
+    same_dow = f"{prefix}_same_dow_4"
     daily = (
-        frame.groupby(["family", DATE])[TARGET]
+        frame.groupby([*keys, DATE])[TARGET]
         .mean()
         .rename(TARGET)
         .reset_index()
-        .sort_values(["family", DATE])
+        .sort_values([*keys, DATE])
     )
     pieces: list[pd.DataFrame] = []
-    for _family, group in daily.groupby("family", sort=False):
+    for _, group in daily.groupby(keys, sort=False):
         part = group.copy()
         values = part[TARGET].astype(float)
-        part["family_mean_7"] = values.rolling(7, min_periods=7).mean()
-        part["family_mean_28"] = values.rolling(28, min_periods=28).mean()
+        part[mean_7] = values.rolling(7, min_periods=7).mean()
+        part[mean_28] = values.rolling(28, min_periods=28).mean()
         far = values.rolling(56, min_periods=28).mean()
-        part["family_level_ratio_7_56"] = (part["family_mean_7"] + 1.0) / (far + 1.0)
-        part["family_same_dow_4"] = pd.concat(
-            [values.shift(lag) for lag in (7, 14, 21, 28)], axis=1
-        ).mean(axis=1)
-        pieces.append(part[["family", DATE, *FAMILY_TREND_FEATURES]])
+        part[ratio] = (part[mean_7] + 1.0) / (far + 1.0)
+        part[same_dow] = pd.concat([values.shift(lag) for lag in (7, 14, 21, 28)], axis=1).mean(
+            axis=1
+        )
+        keep = [c for c in [mean_7, mean_28, ratio, same_dow] if c in part.columns]
+        pieces.append(part[[*keys, DATE, *keep]])
     return pd.concat(pieces, ignore_index=True)
 
 
-def _attach_family_trend(
+def _family_states(frame: pd.DataFrame) -> pd.DataFrame:
+    """各売り場の全店舗平均から、共通する直近の勢いを日ごとに作る。"""
+    states = _rolling_group_states(frame, ["family"], "family")
+    return states[["family", DATE, *FAMILY_TREND_FEATURES]]
+
+
+def _peer_states(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """クラスター・都市の同売り場勢いと、店が売り場平均に対して強いか。"""
+    cluster = _rolling_group_states(frame, ["cluster", "family"], "cluster_family")[
+        ["cluster", "family", DATE, "cluster_family_mean_7", "cluster_family_level_ratio_7_56"]
+    ]
+    city = _rolling_group_states(frame, ["city", "family"], "city_family")[
+        ["city", "family", DATE, "city_family_mean_7", "city_family_level_ratio_7_56"]
+    ]
+    store = (
+        frame.groupby([SERIES_ID, "family", DATE])[TARGET]
+        .mean()
+        .rename(TARGET)
+        .reset_index()
+        .sort_values([SERIES_ID, DATE])
+    )
+    store["store_mean_28"] = store.groupby(SERIES_ID)[TARGET].transform(
+        lambda s: s.rolling(28, min_periods=28).mean()
+    )
+    family = _family_states(frame)[["family", DATE, "family_mean_28"]]
+    store = store.merge(family, on=["family", DATE], how="left")
+    store["store_to_family_ratio_28"] = (store["store_mean_28"] + 1.0) / (
+        store["family_mean_28"] + 1.0
+    )
+    return (
+        cluster,
+        city,
+        store[[SERIES_ID, DATE, "store_to_family_ratio_28"]],
+    )
+
+
+def _attach_by_origin(
     frame: pd.DataFrame,
     states: pd.DataFrame,
+    keys: list[str],
+    feature_names: list[str],
     horizons: pd.Series | np.ndarray,
     *,
     fixed_origin: pd.Timestamp | None = None,
 ) -> pd.DataFrame:
-    """各予測行に、予測起点までに確定した売り場全体の勢いを付ける。"""
+    """各予測行に、予測起点までに確定したグループ特徴を付ける。"""
     out = frame.copy()
     horizon_values = (
         horizons.to_numpy(dtype=int)
@@ -201,16 +256,65 @@ def _attach_family_trend(
         if fixed_origin is None
         else pd.Series(fixed_origin, index=out.index)
     )
-    lookup = out[["family"]].copy()
+    lookup = out[keys].copy()
     lookup["_origin"] = origins.to_numpy()
     merged = lookup.merge(
         states.rename(columns={DATE: "_origin"}),
-        on=["family", "_origin"],
+        on=[*keys, "_origin"],
         how="left",
     )
-    for name in FAMILY_TREND_FEATURES:
+    for name in feature_names:
         out[name] = merged[name].to_numpy()
     return out
+
+
+def _attach_family_trend(
+    frame: pd.DataFrame,
+    states: pd.DataFrame,
+    horizons: pd.Series | np.ndarray,
+    *,
+    fixed_origin: pd.Timestamp | None = None,
+) -> pd.DataFrame:
+    """各予測行に、予測起点までに確定した売り場全体の勢いを付ける。"""
+    return _attach_by_origin(
+        frame, states, ["family"], FAMILY_TREND_FEATURES, horizons, fixed_origin=fixed_origin
+    )
+
+
+def _attach_peer_context(
+    frame: pd.DataFrame,
+    cluster_states: pd.DataFrame,
+    city_states: pd.DataFrame,
+    store_states: pd.DataFrame,
+    horizons: pd.Series | np.ndarray,
+    *,
+    fixed_origin: pd.Timestamp | None = None,
+) -> pd.DataFrame:
+    """地域・クラスター・店の相対強度を、予測起点の情報だけから付ける。"""
+    out = _attach_by_origin(
+        frame,
+        cluster_states,
+        ["cluster", "family"],
+        ["cluster_family_mean_7", "cluster_family_level_ratio_7_56"],
+        horizons,
+        fixed_origin=fixed_origin,
+    )
+    out = _attach_by_origin(
+        out,
+        city_states,
+        ["city", "family"],
+        ["city_family_mean_7", "city_family_level_ratio_7_56"],
+        horizons,
+        fixed_origin=fixed_origin,
+    )
+    return _attach_by_origin(
+        out,
+        store_states,
+        [SERIES_ID],
+        ["store_to_family_ratio_28"],
+        horizons,
+        fixed_origin=fixed_origin,
+    )
 
 
 def fit_predict(
@@ -222,18 +326,30 @@ def fit_predict(
     intermittent: bool = False,
     hurdle: bool = False,
     family_trend: bool = False,
+    peer_context: bool = False,
 ) -> tuple[pd.DataFrame, list[dict[str, float | str]]]:
     """未来の正解を読まず、全予測日を直接予測する。
 
     `intermittent=True` は、予測の起点までに売れていない日の続き方と水準の動きを足す。
     `hurdle=True` は「売れるか」と「売れたらいくらか」を分けて学び、掛けて戻す。
+    `family_trend=True` は全店の売り場平均の勢いを足す。
+    `peer_context=True` はクラスター・都市の同売り場勢いと、店の相対強度も足す。
     """
     if hurdle and not intermittent:
         raise ValueError("hurdle は intermittent=True のときだけ使えます")
     if family_trend and not intermittent:
         raise ValueError("family_trend は intermittent=True のときだけ使えます")
+    if peer_context and not intermittent:
+        raise ValueError("peer_context は intermittent=True のときだけ使えます")
+    use_family = family_trend or peer_context
     columns = (
-        FAMILY_TREND_DIRECT if family_trend else INTERMITTENT_DIRECT if intermittent else FEATURES
+        PEER_CONTEXT_DIRECT
+        if peer_context
+        else FAMILY_TREND_DIRECT
+        if use_family
+        else INTERMITTENT_DIRECT
+        if intermittent
+        else FEATURES
     )
     future_clean = future.drop(columns=[TARGET], errors="ignore").copy()
     horizon = int(future_clean[DATE].nunique())
@@ -245,11 +361,14 @@ def fit_predict(
     train_horizons = _horizons(recent[DATE], horizon)
     featured = _add_dynamic_lags(recent, train_horizons)
     states = _origin_states(recent) if intermittent else None
-    family_states = _family_states(recent) if family_trend else None
+    family_states = _family_states(recent) if use_family else None
+    peer = _peer_states(recent) if peer_context else None
     if intermittent and states is not None:
         featured = _attach_intermittent(featured, states, train_horizons)
-    if family_trend and family_states is not None:
+    if use_family and family_states is not None:
         featured = _attach_family_trend(featured, family_states, train_horizons)
+    if peer_context and peer is not None:
+        featured = _attach_peer_context(featured, peer[0], peer[1], peer[2], train_horizons)
     featured = featured[featured[DATE] > train[DATE].max() - pd.Timedelta(days=context_days)]
     featured = featured.dropna(subset=DYNAMIC_LAGS)
 
@@ -271,10 +390,19 @@ def fit_predict(
         future_clean = _attach_intermittent(
             future_clean, states, future_clean[HORIZON_FEATURE].to_numpy(), fixed_origin=origin
         )
-    if family_trend and family_states is not None:
+    if use_family and family_states is not None:
         future_clean = _attach_family_trend(
             future_clean,
             family_states,
+            future_clean[HORIZON_FEATURE].to_numpy(),
+            fixed_origin=origin,
+        )
+    if peer_context and peer is not None:
+        future_clean = _attach_peer_context(
+            future_clean,
+            peer[0],
+            peer[1],
+            peer[2],
             future_clean[HORIZON_FEATURE].to_numpy(),
             fixed_origin=origin,
         )
