@@ -30,6 +30,12 @@ def _parser() -> argparse.ArgumentParser:
 
     sub.add_parser("fetch", help="Kaggle から公式データを取得する")
     sub.add_parser("status", help="データの取得状況を見る")
+    submit_cmd = sub.add_parser("submit", help="生成済みの submission.csv を Kaggle に提出する")
+    submit_cmd.add_argument(
+        "--message",
+        default="Retail Lab submission",
+        help="Kaggle の提出一覧に表示する説明",
+    )
     sub.add_parser("list", help="登録済みのコンペを見る")
     return parser
 
@@ -65,6 +71,42 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "submit":
+        out = output_dir(root, spec.slug)
+        result_path = out / "result.json"
+        if not result_path.exists():
+            print("結果がありません。先に公式データで予測してください。", file=sys.stderr)
+            return 1
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        if result.get("source") != "kaggle":
+            print(
+                "表示中の結果はデモデータ由来です。公式Kaggle CSVで予測してから提出してください。",
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            receipt = kaggle.submit(
+                root=root,
+                slug=spec.kaggle_slug,
+                submission=out / "submission.csv",
+                sample=data_dir(root, spec.slug, "kaggle") / "sample_submission.csv",
+                message=args.message,
+            )
+        except kaggle.KaggleError as exc:
+            print(
+                json.dumps(
+                    {"ok": False, "error": str(exc), "hint": exc.hint},
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 1
+        (out / "last_submission.json").write_text(
+            json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(json.dumps(receipt, ensure_ascii=False, indent=2))
         return 0
 
     out = args.out or output_dir(root, spec.slug)

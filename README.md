@@ -13,10 +13,9 @@
 ## 画面でできること
 
 1. コンペの概要（誰が困り、何を当て、どう効くか）と指標の妥当性を読む。
-2. 公式データを Kaggle API から取得する。
-3. 4モデルを同じ検証窓で走らせて採点する。
-4. 検証結果を「誤差率・偏り・欠品側の割合」で読む（クライアント報告用）。
-5. `submission.csv` をダウンロードする。
+2. 4モデルを同じ検証窓で走らせて採点する。
+3. 検証結果を「誤差率・偏り・欠品側の割合」で読む（クライアント報告用）。
+4. 提出内容を確認して、画面から Kaggle へ送る。
 
 ## モデル
 
@@ -48,12 +47,14 @@ uv run retail-lab status                     # 公式データの取得状況
 uv run retail-lab fetch                      # Kaggle から公式データを取得
 uv run retail-lab run --source demo          # デモデータで実験
 uv run retail-lab run --source kaggle        # 公式データで実験（未取得なら自動取得）
+uv run retail-lab submit --message "説明"      # 生成済みCSVを検査してKaggleへ提出
 uv run retail-lab --competition store-sales run --source demo
 ```
 
 ## 公式データの取得
 
-画面の「Kaggle から取得」か `uv run retail-lab fetch` で API から取ります。事前に2つ必要です。
+画面は取得操作を見せず、公式データが無ければ再計算時に API から自動取得します。
+CLI から明示的に取る場合は `uv run retail-lab fetch` を使います。事前に2つ必要です。
 
 1. コンペページで Join Competition（規約同意）。
 2. Kaggle の [Settings](https://www.kaggle.com/settings) で API トークンを作る。
@@ -103,3 +104,16 @@ tests/                     指標・分割・混合のテスト
 ```
 
 `.env.local`、`kaggle.json`、`data/*/kaggle/`、`outputs/`、`.venv/` は git 管理外です。
+
+## Kaggle への提出
+
+画面の「提出内容を確認」から送れます。誤送信を防ぐため、1回目のクリックでは送信せず、
+コンペ名・検証 RMSLE・提出行数を表示します。「この内容でKaggleへ提出」を押した時だけ送信します。
+
+送信前に次を自動検査します。
+
+- 結果がデモではなく公式データ由来である
+- 28,512行で、公式 `sample_submission.csv` とIDが完全に一致する
+- IDの重複、売上の欠損・負数がない
+
+Kaggle側の受付結果は `outputs/<slug>/last_submission.json` に保存します。

@@ -30,6 +30,8 @@ export type ClientReport = {
 };
 
 export type Result = {
+  competition: string;
+  title: string;
   source: string;
   horizon: number;
   n_series: number;

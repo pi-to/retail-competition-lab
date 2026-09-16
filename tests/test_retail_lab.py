@@ -6,6 +6,7 @@ import pytest
 
 from retail_lab import blending, registry
 from retail_lab.competition import CompetitionSpec
+from retail_lab.kaggle import SubmissionValidationError, validate_submission
 from retail_lab.metrics import business_metrics, rmsle
 from retail_lab.models import naive
 from retail_lab.validation import split_panel
@@ -163,3 +164,39 @@ def test_demo_data_matches_the_official_column_names(tmp_path: Path):
     assert list(test.columns) == ["id", "date", "store_nbr", "family", "onpromotion"]
     assert test["date"].nunique() == 16
     assert set(train["id"]).isdisjoint(set(test["id"]))
+
+
+def test_submission_validation_accepts_matching_ids(tmp_path: Path):
+    sample = tmp_path / "sample_submission.csv"
+    submission = tmp_path / "submission.csv"
+    pd.DataFrame({"id": [10, 11, 12], "sales": [0.0, 1.25, 2.5]}).to_csv(sample, index=False)
+    pd.DataFrame({"id": [10, 11, 12], "sales": [0.5, 1.0, 2.0]}).to_csv(submission, index=False)
+
+    result = validate_submission(submission, sample)
+
+    assert result["rows"] == 3
+    assert result["id_min"] == 10
+    assert result["id_max"] == 12
+    assert result["sales_min"] == 0.5
+    assert result["sales_max"] == 2.0
+
+
+@pytest.mark.parametrize(
+    ("submission_data", "message"),
+    [
+        ({"id": [10, 11], "sales": [1.0, 2.0]}, "行数"),
+        ({"id": [10, 11, 99], "sales": [1.0, 2.0, 3.0]}, "id"),
+        ({"id": [10, 11, 12], "sales": [1.0, -1.0, 3.0]}, "負"),
+        ({"id": [10, 11, 12], "sales": [1.0, float("nan"), 3.0]}, "欠損"),
+    ],
+)
+def test_submission_validation_rejects_invalid_files(
+    tmp_path: Path, submission_data: dict[str, list[float]], message: str
+):
+    sample = tmp_path / "sample_submission.csv"
+    submission = tmp_path / "submission.csv"
+    pd.DataFrame({"id": [10, 11, 12], "sales": [0.0, 0.0, 0.0]}).to_csv(sample, index=False)
+    pd.DataFrame(submission_data).to_csv(submission, index=False)
+
+    with pytest.raises(SubmissionValidationError, match=message):
+        validate_submission(submission, sample)

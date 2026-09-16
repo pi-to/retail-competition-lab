@@ -4,7 +4,6 @@ import { Overview } from "@/components/overview";
 import { StoreApp } from "@/components/store-app";
 import { Separator } from "@/components/ui/separator";
 import { DEFAULT_COMPETITION, getCompetition } from "@/lib/competitions";
-import { readKaggleStatus } from "@/lib/kaggle-status";
 import { isRunning } from "@/lib/run-state";
 import type { Result, RunError, Status } from "@/lib/types";
 
@@ -30,10 +29,7 @@ async function loadInitial(slug: string) {
 
 export default async function Home() {
   const content = getCompetition(DEFAULT_COMPETITION);
-  const [initial, kaggleStatus] = await Promise.all([
-    loadInitial(content.slug),
-    readKaggleStatus(content.slug),
-  ]);
+  const initial = await loadInitial(content.slug);
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-col gap-10 px-4 py-10 sm:px-6">
       <Overview content={content} />
@@ -44,7 +40,6 @@ export default async function Home() {
         initialStatus={initial.status}
         initialError={initial.error}
         initialRunning={initial.running}
-        kaggleStatus={kaggleStatus}
       />
       <Separator />
       <footer className="pb-6 text-xs text-muted-foreground">

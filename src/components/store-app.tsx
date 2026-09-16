@@ -12,7 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import { ClientReport } from "@/components/client-report";
-import { KaggleData } from "@/components/kaggle-data";
+import { SubmitCard } from "@/components/submit-card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,7 +31,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { CompetitionContent } from "@/lib/competitions";
-import type { KaggleStatus, Result, ResultPayload, RunError, Status } from "@/lib/types";
+import type { Result, ResultPayload, RunError, Status } from "@/lib/types";
 
 const STRATEGY_LABEL: Record<string, string> = {
   rule: "逆RMSLE重み",
@@ -45,22 +45,17 @@ export function StoreApp({
   initialStatus,
   initialError,
   initialRunning,
-  kaggleStatus,
 }: {
   content: CompetitionContent;
   initialResult: Result | null;
   initialStatus: Status | null;
   initialError: RunError | null;
   initialRunning: boolean;
-  kaggleStatus: KaggleStatus;
 }) {
   const [result, setResult] = useState<Result | null>(initialResult);
   const [status, setStatus] = useState<Status | null>(initialStatus);
   const [error, setError] = useState<RunError | null>(initialError);
   const [running, setRunning] = useState(initialRunning);
-  const [source, setSource] = useState<"demo" | "kaggle">(
-    initialResult?.source === "kaggle" ? "kaggle" : "demo"
-  );
 
   /** 実験は別プロセスで走る。画面はファイルに書かれた進捗を読むだけ。 */
   useEffect(() => {
@@ -84,7 +79,7 @@ export function StoreApp({
       const res = await fetch("/api/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source, competition: content.slug }),
+        body: JSON.stringify({ source: "kaggle", competition: content.slug }),
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as { error?: string };
@@ -146,36 +141,20 @@ export function StoreApp({
       </section>
 
       <section className="flex flex-col gap-3">
-        <SectionTitle title="動かす" sub="手元で実際に採点してみる" />
-        <KaggleData initialStatus={kaggleStatus} onReady={() => setSource("kaggle")} />
+        <SectionTitle title="再計算" sub="公式データで全モデルをもう一度動かす" />
         <Card>
           <CardHeader>
             <CardDescription>
-              {content.demoNote}公式データを取ると、そのまま提出できる submission.csv が{" "}
-              <code>outputs/{content.slug}/</code> に出ます。
+              公式データ1,782系列を検証し、提出ファイルを更新します。通常は6〜7分です。
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <div className="flex flex-wrap items-center gap-2">
-              <Button
-                variant={source === "demo" ? "default" : "outline"}
-                onClick={() => setSource("demo")}
-                disabled={running}
-              >
-                デモデータ
-              </Button>
-              <Button
-                variant={source === "kaggle" ? "default" : "outline"}
-                onClick={() => setSource("kaggle")}
-                disabled={running}
-              >
-                公式Kaggle CSV
-              </Button>
               <Button onClick={() => void start()} disabled={running}>
-                {running ? "実行中…" : "予測を実行"}
+                {running ? "再計算中…" : "公式データで再計算"}
               </Button>
               <Button variant="outline" asChild>
-                <a href="/api/submission">submission.csv</a>
+                <a href={`/api/submission?competition=${content.slug}`}>CSVを確認</a>
               </Button>
             </div>
             {running ? (
@@ -210,6 +189,11 @@ export function StoreApp({
 
       {result ? (
         <>
+          <section className="flex flex-col gap-3">
+            <SectionTitle title="提出" sub="検証済みの予測をKaggleへ送る" />
+            <SubmitCard result={result} />
+          </section>
+
           <section className="flex flex-col gap-3">
             <SectionTitle
               title="検証レポート"
