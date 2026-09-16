@@ -362,6 +362,7 @@ def run_experiment(
     best_score = float(choice["score"])
     holdout_score = choice.get("holdout_score")
     alpha = float(choice.get("alpha", 1.0))
+    models_used: list[str] = list(choice.get("models_used") or [])
     best_single = str(choice["best_single"])
     per_strategy: dict[str, float] = choice["candidates"]
     blend_business = blending.business_against(val_blend, split.val)
@@ -396,6 +397,7 @@ def run_experiment(
                 round(float(holdout_score), 5) if holdout_score is not None else None
             ),
             "shrinkage": round(alpha, 3),
+            "models_used": models_used,
             "status": "ok",
             "weight": 1.0,
             "strategy": strategy,
@@ -530,6 +532,7 @@ def reblend_cached(prepared: Prepared, out_dir: Path, source_run: Path) -> JsonD
     best_score = float(choice["score"])
     holdout_score = choice.get("holdout_score")
     alpha = float(choice.get("alpha", 1.0))
+    models_used: list[str] = list(choice.get("models_used") or [])
     best_single = str(choice["best_single"])
     per_strategy: dict[str, float] = choice["candidates"]
     blend_business = blending.business_against(val_blend, split.val)
@@ -580,6 +583,7 @@ def reblend_cached(prepared: Prepared, out_dir: Path, source_run: Path) -> JsonD
                 round(float(holdout_score), 5) if holdout_score is not None else None
             ),
             "shrinkage": round(alpha, 3),
+            "models_used": models_used,
             "status": "ok",
             "weight": 1.0,
             "strategy": strategy,

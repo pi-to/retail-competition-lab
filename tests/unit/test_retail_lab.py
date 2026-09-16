@@ -252,6 +252,21 @@ def test_choose_blend_reports_a_holdout_score_from_unseen_series():
     assert set(choice["candidates"]) >= {"fitted", "fitted_family"}
 
 
+def test_choose_blend_drops_a_model_that_only_adds_noise():
+    """当てはめには使えるが、見ていない系列では足を引っ張るモデルは外す。"""
+    preds, truth = _family_panel_preds(noise=0.05)
+    rng = np.random.default_rng(7)
+    noise_only = preds["early"].copy()
+    noise_only["pred"] = rng.uniform(1, 120, len(noise_only))
+    preds["noise"] = noise_only
+    train = pd.DataFrame({"date": pd.to_datetime(["2017-08-15"])})
+
+    choice = blending.choose_blend(preds, preds, train, truth, truth)
+
+    assert "noise" not in choice["models_used"]
+    assert set(choice["models_used"]) >= {"early", "late"}
+
+
 def test_series_halves_keep_every_family_on_both_sides():
     preds, _truth = _family_panel_preds()
     fit_ids, hold_ids = blending.series_halves(preds)

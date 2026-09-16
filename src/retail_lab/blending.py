@@ -298,6 +298,65 @@ STRATEGY_PLANS: tuple[tuple[str, float], ...] = (
 )
 
 
+def _two_fold_score(
+    pred_map: dict[str, pd.DataFrame],
+    val: pd.DataFrame,
+    halves: tuple[set[Any], set[Any]],
+    strategy: str,
+    alpha: float,
+    train: pd.DataFrame,
+    window: int,
+) -> float:
+    """片側で重みを当てはめ、もう片側で採点する。両方向やって平均する。"""
+    left, right = halves
+    total = 0.0
+    for fit_ids, hold_ids in ((left, right), (right, left)):
+        fit_actual = val[val[ROW_ID].isin(fit_ids)]
+        hold_actual = val[val[ROW_ID].isin(hold_ids)]
+        plan = _fit_plan(strategy, _subset(pred_map, fit_ids), fit_actual, alpha)
+        raw = _apply_plan(plan, _subset(pred_map, hold_ids))
+        candidate = zero_out_dead_series(train, raw, window) if window else raw
+        total += score_against(candidate, hold_actual)
+    return total / 2.0
+
+
+def _drop_models_that_do_not_earn_their_place(
+    pred_map: dict[str, pd.DataFrame],
+    val: pd.DataFrame,
+    halves: tuple[set[Any], set[Any]],
+    strategy: str,
+    alpha: float,
+    train: pd.DataFrame,
+    window: int,
+    minimum: int = 2,
+) -> tuple[list[str], float]:
+    """1つ外して良くなるモデルを順に落とす。
+
+    重みの当てはめは行を見ているので、似たモデルを並べるほど当てはめ過ぎる。
+    見ていない系列で採点して、悪化させるモデルだけを外す。
+    """
+    kept = dict(pred_map)
+    best = _two_fold_score(kept, val, halves, strategy, alpha, train, window)
+    while len(kept) > minimum:
+        trials: dict[str, float] = {}
+        for name in sorted(kept):
+            trial = {key: frame for key, frame in kept.items() if key != name}
+            try:
+                trials[name] = _two_fold_score(
+                    trial, val, halves, strategy, alpha, train, window
+                )
+            except (ValueError, KeyError):
+                continue
+        if not trials:
+            break
+        worst = min(trials, key=lambda name: trials[name])
+        if trials[worst] >= best - 1e-6:
+            break
+        best = trials[worst]
+        kept = {key: frame for key, frame in kept.items() if key != worst}
+    return sorted(kept), best
+
+
 def choose_blend(
     val_preds: dict[str, pd.DataFrame],
     test_preds: dict[str, pd.DataFrame],
@@ -306,36 +365,36 @@ def choose_blend(
     labeled: pd.DataFrame,
     windows: tuple[int, ...] = (0, 3, 7, 14, 21),
 ) -> dict[str, Any]:
-    """混ぜ方とゼロ窓を選ぶ。
+    """使うモデル、混ぜ方、ゼロ窓を選ぶ。
 
-    重みを当てはめた同じ行で選ぶと、グループ別の重みが必ず有利に見える。
-    そこで系列を半分に割り、片方で当てはめ、もう片方で採点した点数で選ぶ。
-    選んだ後だけ、検証窓の全行で当てはめ直して提出用の予測を作る。
+    重みを当てはめた同じ行で選ぶと、グループ別の重みや似たモデルの重ね置きが
+    必ず有利に見える。そこでファミリーごとに系列を2つに割り、片方で当てはめて
+    もう片方で採点する（両方向の平均）。選んだ後だけ検証窓の全行で当てはめ直す。
     """
     scores = {name: score_against(frame, val) for name, frame in val_preds.items()}
     best_single = min(scores, key=lambda name: scores[name])
-    names = sorted(val_preds)
-    fit_ids, score_ids = series_halves(val_preds)
-    fit_preds, hold_preds = _subset(val_preds, fit_ids), _subset(val_preds, score_ids)
-    fit_actual = val[val[ROW_ID].isin(fit_ids)]
-    hold_actual = val[val[ROW_ID].isin(score_ids)]
+    halves = series_halves(val_preds)
+    honest_ok = bool(halves[0] and halves[1])
 
-    honest: dict[tuple[str, float, int], float] = {}
-    plans = STRATEGY_PLANS if (fit_ids and score_ids) else ()
-    for strategy, alpha in plans:
-        try:
-            plan = _fit_plan(strategy, fit_preds, fit_actual, alpha)
-            raw = _apply_plan(plan, hold_preds)
-        except (ValueError, KeyError):
-            continue
-        for window in windows:
-            candidate = zero_out_dead_series(train, raw, window) if window else raw
-            honest[(strategy, alpha, window)] = score_against(candidate, hold_actual)
+    per_strategy: dict[str, float] = {}
+    chosen_key: tuple[str, float, int] | None = None
+    best_honest = float("inf")
+    if honest_ok:
+        for strategy, alpha in STRATEGY_PLANS:
+            label = strategy if alpha == 1.0 else f"{strategy}_shrunk{alpha:g}"
+            for window in windows:
+                try:
+                    value = _two_fold_score(
+                        val_preds, val, halves, strategy, alpha, train, window
+                    )
+                except (ValueError, KeyError):
+                    continue
+                per_strategy[label] = min(per_strategy.get(label, float("inf")), value)
+                if value < best_honest:
+                    best_honest = value
+                    chosen_key = (strategy, alpha, window)
 
-    if honest:
-        key = min(honest, key=lambda item: honest[item])
-        holdout_score: float | None = honest[key]
-    else:
+    if chosen_key is None:
         # 系列が少なすぎて隠して採点できないときだけ、当てはめた点数で選ぶ。
         in_sample: dict[tuple[str, float, int], float] = {}
         for strategy, alpha in STRATEGY_PLANS:
@@ -349,20 +408,39 @@ def choose_blend(
                 in_sample[(strategy, alpha, window)] = score_against(candidate, val)
         if not in_sample:
             raise ValueError("混合候補がありません")
-        key = min(in_sample, key=lambda item: in_sample[item])
-        holdout_score = None
+        chosen_key = min(in_sample, key=lambda item: in_sample[item])
 
-    strategy, alpha, window = key
-    plan = _fit_plan(strategy, val_preds, val, alpha)
-    val_raw = _apply_plan(plan, val_preds)
-    test_raw = _apply_plan(plan, test_preds)
+    strategy, alpha, window = chosen_key
+    used = sorted(val_preds)
+    holdout_score: float | None = None
+    if honest_ok:
+        used, holdout_score = _drop_models_that_do_not_earn_their_place(
+            val_preds, val, halves, strategy, alpha, train, window
+        )
+        for window_option in windows:
+            try:
+                value = _two_fold_score(
+                    {name: val_preds[name] for name in used},
+                    val,
+                    halves,
+                    strategy,
+                    alpha,
+                    train,
+                    window_option,
+                )
+            except (ValueError, KeyError):
+                continue
+            if value < holdout_score - 1e-9:
+                holdout_score = value
+                window = window_option
+
+    val_used = {name: val_preds[name] for name in used}
+    test_used = {name: test_preds[name] for name in used}
+    plan = _fit_plan(strategy, val_used, val, alpha)
+    val_raw = _apply_plan(plan, val_used)
+    test_raw = _apply_plan(plan, test_used)
     val_blend = zero_out_dead_series(train, val_raw, window) if window else val_raw
     test_blend = zero_out_dead_series(labeled, test_raw, window) if window else test_raw
-
-    per_strategy: dict[str, float] = {}
-    for (name, a, _window), value in honest.items():
-        label = name if a == 1.0 else f"{name}_shrunk{a:g}"
-        per_strategy[label] = min(per_strategy.get(label, float("inf")), value)
 
     return {
         "strategy": strategy,
@@ -370,9 +448,10 @@ def choose_blend(
         "zero_window": window,
         "val": val_blend,
         "test": test_blend,
-        "weights": _mean_weights(plan, names),
+        "weights": _mean_weights(plan, used),
         "weights_by_horizon": plan.get("by_horizon"),
         "weights_by_family": plan.get("by_family"),
+        "models_used": used,
         "best_single": best_single,
         "score": score_against(val_blend, val),
         "holdout_score": holdout_score,
