@@ -12,9 +12,19 @@ export type ModelRow = {
   error?: string;
   weights?: Record<string, number>;
   top_features?: { feature: string; gain: number }[];
+  wape?: number;
+  bias?: number;
+  under_rate?: number;
+  mae?: number;
 };
 
 export type Point = { date: string; sales?: number; pred?: number };
+
+export type ClientReport = {
+  data_usage: { label: string; value: string; detail: string }[];
+  interpretation: { title: string; body: string }[];
+  glossary: { term: string; body: string }[];
+};
 
 export type Result = {
   source: string;
@@ -34,8 +44,19 @@ export type Result = {
     models: Record<string, Point[]>;
   };
   method: MethodStep[];
+  report?: ClientReport;
   elapsed_sec: number;
   kaggle_ready: boolean;
 };
 
 export type Status = { step: string; message: string; pct: number };
+
+export type KaggleStatus = {
+  competition: string;
+  ready: boolean;
+  missing: string[];
+  has_credentials: boolean;
+  credential_error?: string;
+  rules_url: string;
+  token_url: string;
+};

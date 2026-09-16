@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from metrics import rmsle
+from metrics import business_metrics, rmsle
 
 
 def inverse_rmsle_weights(scores: dict[str, float]) -> dict[str, float]:
@@ -38,6 +38,11 @@ def blend(pred_map: dict[str, pd.DataFrame], weights: dict[str, float]) -> pd.Da
 def score_against(pred: pd.DataFrame, actual: pd.DataFrame) -> float:
     m = pred.merge(actual[["id", "sales"]], on="id", how="inner")
     return rmsle(m["sales"], m["pred"])
+
+
+def business_against(pred: pd.DataFrame, actual: pd.DataFrame) -> dict:
+    m = pred.merge(actual[["id", "sales"]], on="id", how="inner")
+    return business_metrics(m["sales"], m["pred"])
 
 
 def zero_sales_rule(history: pd.DataFrame, pred: pd.DataFrame, lookback: int = 21) -> pd.DataFrame:

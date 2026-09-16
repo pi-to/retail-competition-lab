@@ -76,6 +76,104 @@ def _preview(history: pd.DataFrame, val: pd.DataFrame, pred_map: dict[str, pd.Da
     return series
 
 
+def _pct(x: float) -> str:
+    return f"{x * 100:.1f}%"
+
+
+def _client_report(
+    source: str,
+    hist: pd.DataFrame,
+    val: pd.DataFrame,
+    models_meta: list[dict],
+    n_series: int,
+) -> dict:
+    """非エンジニアが読む前提のまとめ。数字の意味を文章で添える。"""
+    by_id = {m["id"]: m for m in models_meta if m.get("status") == "ok"}
+    blend = by_id.get("blend")
+    naive = by_id.get("seasonal_naive")
+
+    usage = [
+        {
+            "label": "学習に使った期間",
+            "value": f"{hist['date'].min().date()} 〜 {hist['date'].max().date()}",
+            "detail": f"{int(hist['date'].nunique())}日分 / {len(hist):,}行",
+        },
+        {
+            "label": "答え合わせに使った期間",
+            "value": f"{val['date'].min().date()} 〜 {val['date'].max().date()}",
+            "detail": f"{int(val['date'].nunique())}日分 / {len(val):,}行",
+        },
+        {
+            "label": "予測した組み合わせ",
+            "value": f"{n_series:,} 系列",
+            "detail": "店舗 × 商品ファミリー",
+        },
+        {
+            "label": "検証の作り方",
+            "value": "最後の16日を隠す",
+            "detail": "全モデルがこの16日を一切見ずに予測し、あとで実績と突き合わせた",
+        },
+    ]
+
+    interpretation: list[dict] = []
+    if blend:
+        interpretation.append(
+            {
+                "title": "どれくらい当たったか",
+                "body": (
+                    f"採用した混合モデルの予測は、隠した16日間の合計に対して平均 {_pct(blend['wape'])} ずれました。"
+                    f"言い換えると、100個売れる日を約{100 * (1 - blend['wape']):.0f}〜{100 * (1 + blend['wape']):.0f}個の幅で見込めています。"
+                ),
+            }
+        )
+    if blend and naive and naive["wape"] > 0:
+        gain = 1 - blend["wape"] / naive["wape"]
+        interpretation.append(
+            {
+                "title": "勘と比べてどうか",
+                "body": (
+                    f"「先週の同じ曜日と同じだけ売れる」と考える単純な方法は同じ期間で {_pct(naive['wape'])} ずれました。"
+                    f"混合モデルはその誤差を {_pct(max(gain, 0))} 減らしています。"
+                    if gain > 0
+                    else f"単純な方法は {_pct(naive['wape'])} でした。今回のデータでは差が出ていないので、特徴やモデルを足す余地があります。"
+                ),
+            }
+        )
+    if blend:
+        direction = "多め" if blend["bias"] > 0 else "少なめ"
+        interpretation.append(
+            {
+                "title": "外れ方の癖",
+                "body": (
+                    f"合計では実績より {_pct(abs(blend['bias']))} {direction}に見込んでいます。"
+                    f"個別の予測では {_pct(blend['under_rate'])} が実績より少ない値で、ここが欠品につながる側です。"
+                    "発注に使うときは、この比率を見て安全在庫を決められます。"
+                ),
+            }
+        )
+    interpretation.append(
+        {
+            "title": "この数字の読み方の注意",
+            "body": (
+                "公式データで測った結果なので、Kaggle に提出したときのスコアの目安になります。"
+                if source == "kaggle"
+                else "いまはデモ用の縮小データです。手順が動くことの確認用で、誤差の絶対値は公式データとは変わります。公式CSVで再実行すると本番の水準が出ます。"
+            ),
+        }
+    )
+
+    return {
+        "data_usage": usage,
+        "interpretation": interpretation,
+        "glossary": [
+            {"term": "誤差率", "body": "予測と実績のずれを合計して、実績の合計で割った値。小さいほど良い。"},
+            {"term": "偏り", "body": "全体として多めに見たか少なめに見たか。プラスは在庫過多、マイナスは欠品寄り。"},
+            {"term": "欠品側の割合", "body": "実績より少なく見積もった予測の割合。"},
+            {"term": "RMSLE", "body": "コンペの採点式。割合のずれを見る指標で、順位はこれで決まる。"},
+        ],
+    }
+
+
 def run(root: Path, source: str, out_dir: Path, skip_foundation: bool = False) -> dict:
     t0 = time.time()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -96,10 +194,21 @@ def run(root: Path, source: str, out_dir: Path, skip_foundation: bool = False) -
 
     def register(model_id: str, title: str, note: str, val_df: pd.DataFrame, test_df: pd.DataFrame, extra: dict | None = None) -> None:
         sc = blend_mod.score_against(val_df, val)
+        biz = blend_mod.business_against(val_df, val)
         scores[model_id] = sc
         val_preds[model_id] = val_df
         test_preds[model_id] = test_df
-        row = {"id": model_id, "title": title, "note": note, "rmsle": round(sc, 5), "status": "ok"}
+        row = {
+            "id": model_id,
+            "title": title,
+            "note": note,
+            "rmsle": round(sc, 5),
+            "status": "ok",
+            "wape": round(biz["wape"], 4),
+            "bias": round(biz["bias"], 4),
+            "under_rate": round(biz["under_rate"], 4),
+            "mae": round(biz["mae"], 2),
+        }
         if extra:
             row.update(extra)
         models_meta.append(row)
@@ -189,6 +298,7 @@ def run(root: Path, source: str, out_dir: Path, skip_foundation: bool = False) -
         if row.get("status") == "ok":
             row["weight"] = round(weights.get(row["id"], 0.0), 4)
 
+    blend_biz = blend_mod.business_against(val_blend, val)
     models_meta.append(
         {
             "id": "blend",
@@ -198,6 +308,10 @@ def run(root: Path, source: str, out_dir: Path, skip_foundation: bool = False) -
             "status": "ok",
             "weight": 1.0,
             "weights": {k: round(v, 4) for k, v in weights.items()},
+            "wape": round(blend_biz["wape"], 4),
+            "bias": round(blend_biz["bias"], 4),
+            "under_rate": round(blend_biz["under_rate"], 4),
+            "mae": round(blend_biz["mae"], 2),
         }
     )
 
@@ -217,6 +331,7 @@ def run(root: Path, source: str, out_dir: Path, skip_foundation: bool = False) -
         "feature_importance": importance[:16],
         "preview": _preview(hist, val, val_preds, val_blend),
         "method": METHOD,
+        "report": _client_report(bundle.source, hist, val, models_meta, n_series),
         "elapsed_sec": round(time.time() - t0, 1),
         "kaggle_ready": bundle.source == "kaggle",
     }
