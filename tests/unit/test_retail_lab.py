@@ -206,6 +206,29 @@ def test_choose_blend_prefers_family_weights_when_they_win():
     )
 
 
+def test_pool_predictions_min_is_never_above_any_member():
+    preds = {
+        "a": pd.DataFrame(
+            {
+                "row_id": [1, 2],
+                "date": pd.to_datetime(["2017-08-16", "2017-08-17"]),
+                "series_id": ["1::A", "1::A"],
+                "pred": [10.0, 4.0],
+            }
+        ),
+        "b": pd.DataFrame(
+            {
+                "row_id": [1, 2],
+                "date": pd.to_datetime(["2017-08-16", "2017-08-17"]),
+                "series_id": ["1::A", "1::A"],
+                "pred": [3.0, 9.0],
+            }
+        ),
+    }
+    pooled = blending.pool_predictions(preds, ["a", "b"], how="min")
+    assert pooled.sort_values("row_id")["pred"].tolist() == pytest.approx([3.0, 4.0])
+
+
 def test_prediction_origin_is_the_day_before_the_first_forecast():
     preds = {
         "m": pd.DataFrame(

@@ -341,6 +341,16 @@ def run_experiment(
             skipped("timesfm", "TimesFM 2.5", timesfm.CHECKPOINT, timesfm.ORG, exc)
 
     write_status(out_dir, "blend", "混ぜ方とゼロ系列の窓を検証窓で選ぶ", 90)
+    val_preds, test_preds = blending.with_pooled_candidates(val_preds, test_preds)
+    if "robust_min" in val_preds:
+        register(
+            "robust_min",
+            "強いモデルの行ごと最小",
+            "direct / 再帰 / TimesFM の行ごと最小。過大予測が多い系統向け。",
+            val_preds["robust_min"],
+            test_preds["robust_min"],
+            {"org": "custom"},
+        )
     choice = blending.choose_blend(val_preds, test_preds, split.train, split.val, labeled)
     strategy = str(choice["strategy"])
     zero_window = int(choice["zero_window"])
@@ -469,6 +479,7 @@ def reblend_cached(prepared: Prepared, out_dir: Path, source_run: Path) -> JsonD
 
     split = split_panel(prepared.panel, prepared.spec.horizon)
     write_status(out_dir, "blend", "保存済み予測の混ぜ方を検証窓で選ぶ", 90)
+    val_preds, test_preds = blending.with_pooled_candidates(val_preds, test_preds)
     choice = blending.choose_blend(val_preds, test_preds, split.train, split.val, split.labeled)
     strategy = str(choice["strategy"])
     zero_window = int(choice["zero_window"])
@@ -483,7 +494,22 @@ def reblend_cached(prepared: Prepared, out_dir: Path, source_run: Path) -> JsonD
     blend_business = blending.business_against(val_blend, split.val)
 
     source = json.loads((source_run / "result.json").read_text(encoding="utf-8"))
-    models_meta = [row for row in source.get("models", []) if row.get("id") != "blend"]
+    skip_ids = {"blend", "robust_min"}
+    models_meta = [
+        row for row in source.get("models", []) if row.get("id") not in skip_ids
+    ]
+    if "robust_min" in val_preds:
+        robust_score = blending.score_against(val_preds["robust_min"], split.val)
+        models_meta.append(
+            {
+                "id": "robust_min",
+                "title": "強いモデルの行ごと最小",
+                "note": "direct・再帰・TimesFMの行ごと最小。過大予測向け。",
+                "rmsle": round(robust_score, 5),
+                "status": "ok",
+                "org": "custom",
+            }
+        )
     for row in models_meta:
         if row.get("status") == "ok":
             row["weight"] = round(weights.get(str(row.get("id")), 0.0), 4)

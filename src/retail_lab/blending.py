@@ -132,6 +132,63 @@ def blend_by_family(
     return pd.concat(pieces, ignore_index=True)
 
 
+def pool_predictions(
+    pred_map: dict[str, pd.DataFrame],
+    names: list[str] | None = None,
+    *,
+    how: str = "min",
+) -> pd.DataFrame:
+    """複数モデルの予測を行ごとにまとめる。過大予測が多い系統の抑え込み用。"""
+    usable = [name for name in (names or sorted(pred_map)) if name in pred_map]
+    if len(usable) < 2:
+        raise ValueError("まとめるモデルが足りません")
+    if how not in {"min", "median", "mean", "gmean"}:
+        raise ValueError(f"未対応のまとめ方です: {how}")
+    base = pred_map[usable[0]][[ROW_ID, DATE, SERIES_ID]].copy()
+    order = base[ROW_ID].to_numpy()
+    matrix = np.column_stack(
+        [
+            pred_map[name].set_index(ROW_ID).loc[order, PRED].clip(lower=0).to_numpy()
+            for name in usable
+        ]
+    )
+    if how == "min":
+        values = matrix.min(axis=1)
+    elif how == "median":
+        values = np.median(matrix, axis=1)
+    elif how == "mean":
+        values = matrix.mean(axis=1)
+    else:
+        values = np.expm1(np.mean(np.log1p(matrix), axis=1))
+    out = base
+    out[PRED] = np.clip(values, 0, None)
+    return out
+
+
+def with_pooled_candidates(
+    val_preds: dict[str, pd.DataFrame],
+    test_preds: dict[str, pd.DataFrame],
+) -> tuple[dict[str, pd.DataFrame], dict[str, pd.DataFrame]]:
+    """過大予測を抑える行ごと最小モデルを候補へ足す。"""
+    pool_names = [
+        name
+        for name in (
+            "direct_horizon_lgbm",
+            "recursive_lgbm",
+            "recursive_lgbm_no_eq",
+            "timesfm",
+        )
+        if name in val_preds and name in test_preds
+    ]
+    if len(pool_names) < 2:
+        return val_preds, test_preds
+    val_out = dict(val_preds)
+    test_out = dict(test_preds)
+    val_out["robust_min"] = pool_predictions(val_preds, pool_names, how="min")
+    test_out["robust_min"] = pool_predictions(test_preds, pool_names, how="min")
+    return val_out, test_out
+
+
 def choose_blend(
     val_preds: dict[str, pd.DataFrame],
     test_preds: dict[str, pd.DataFrame],
