@@ -54,6 +54,7 @@ jobs:
         uses: actions/ai-inference@v1
         with:
           prompt-file: ai-review-prompt.txt
+          max-tokens: "1200"
 
       - name: Create or update review comment
         uses: actions/github-script@v7
