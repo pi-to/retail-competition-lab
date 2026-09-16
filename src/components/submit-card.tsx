@@ -146,7 +146,8 @@ export function SubmitCard({ result }: { result: Result }) {
         <Alert>
           <AlertTitle>{rec.headline}</AlertTitle>
           <AlertDescription>
-            このボタンが送るのは Champion の CSV です。公開LB 0.39515 の古い混合ではありません。
+            このボタンが送るのは Champion の CSV です。公開LB 0.39515
+            の古い混合でも、その前の 0.38584 でもありません。
           </AlertDescription>
         </Alert>
         {!confirming ? (
