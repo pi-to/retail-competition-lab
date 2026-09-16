@@ -6,16 +6,39 @@ import { DEFAULT_COMPETITION } from "@/lib/competitions";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-export async function GET(req: Request) {
-  const slug = new URL(req.url).searchParams.get("competition") ?? DEFAULT_COMPETITION;
+function parse(stdout: string) {
   try {
-    const receipt = JSON.parse(
-      await readFile(path.join(outputDir(slug), "last_submission.json"), "utf8")
-    );
-    return Response.json({ receipt });
+    return JSON.parse(stdout) as Record<string, unknown>;
   } catch {
-    return Response.json({ receipt: null });
+    return null;
   }
+}
+
+/** 提出できる状態か（トークン権限とコンペ参加）を先に確かめる。提出はしない。 */
+export async function GET(req: Request) {
+  const url = new URL(req.url);
+  const slug = url.searchParams.get("competition") ?? DEFAULT_COMPETITION;
+
+  if (url.searchParams.get("receipt") === "1") {
+    try {
+      const receipt = JSON.parse(
+        await readFile(path.join(outputDir(slug), "last_submission.json"), "utf8")
+      );
+      return Response.json({ receipt });
+    } catch {
+      return Response.json({ receipt: null });
+    }
+  }
+
+  const result = await runCli(["--competition", slug, "preflight"]);
+  const parsed = parse(result.stdout);
+  if (!parsed) {
+    return Response.json(
+      { ok: false, message: result.stderr.trim() || "確認できませんでした。" },
+      { status: 500 }
+    );
+  }
+  return Response.json(parsed);
 }
 
 export async function POST(req: Request) {
@@ -33,13 +56,12 @@ export async function POST(req: Request) {
     message || "Retail Lab submission",
   ]);
 
-  try {
-    const parsed = JSON.parse(result.stdout) as { ok?: boolean };
-    return Response.json(parsed, { status: parsed.ok ? 200 : 400 });
-  } catch {
+  const parsed = parse(result.stdout) as { ok?: boolean } | null;
+  if (!parsed) {
     return Response.json(
       { ok: false, error: result.stderr.trim() || "提出に失敗しました。" },
       { status: 500 }
     );
   }
+  return Response.json(parsed, { status: parsed.ok ? 200 : 400 });
 }

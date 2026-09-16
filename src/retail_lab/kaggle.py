@@ -5,8 +5,10 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import shutil
 import tempfile
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -138,6 +140,7 @@ def _json_request(
     *,
     method: str = "GET",
     payload: dict[str, Any] | None = None,
+    slug: str = "",
 ) -> dict[str, Any]:
     body = json.dumps(payload).encode() if payload is not None else None
     request = urllib.request.Request(
@@ -156,10 +159,7 @@ def _json_request(
             raw = response.read()
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode(errors="replace")
-        raise KaggleError(
-            f"Kaggle API が提出を拒否しました（HTTP {exc.code}）。",
-            _api_error_hint(exc.code, detail),
-        ) from exc
+        raise KaggleError(*explain_api_error(exc.code, detail, slug)) from exc
     try:
         parsed: dict[str, Any] = json.loads(raw)
         return parsed
@@ -167,19 +167,48 @@ def _json_request(
         raise KaggleError("Kaggle API の応答を読み取れませんでした。") from exc
 
 
-def _api_error_hint(code: int, detail: str) -> str:
-    if code in (401, 403):
-        return "APIトークン、コンペ規約への同意、または提出権限を確認してください。"
-    if code == 429:
-        return "提出回数の上限に達した可能性があります。Kaggle の提出一覧を確認してください。"
+def _api_message(detail: str) -> str:
     try:
         payload = json.loads(detail)
-        message = payload.get("message") or payload.get("error")
-        if message:
-            return str(message)
     except json.JSONDecodeError:
-        pass
-    return detail[:500]
+        return detail[:500]
+    message = payload.get("message") or payload.get("error")
+    return str(message) if message else detail[:500]
+
+
+def explain_api_error(status: int, detail: str, slug: str) -> tuple[str, str]:
+    """Kaggle の応答を、次に何をすればいいかが分かる日本語にする。"""
+    message = _api_message(detail)
+
+    denied = re.search(r"Permission '([^']+)' was denied", message)
+    if denied:
+        scope = denied.group(1)
+        return (
+            f"APIトークンに権限 {scope} がありません。",
+            "Kaggle の Settings で新しいトークンを作り、"
+            "competitions.participate と競技への提出を許可する権限を含めてください。",
+        )
+    if "do not have a Team" in message or "not have a team" in message.lower():
+        return (
+            "このコンペにまだ参加していません（チームが未作成です）。",
+            f"{rules_url(slug)} を開いて Join Competition を押し、規約に同意してください。",
+        )
+    if "rules" in message.lower() and "accept" in message.lower():
+        return (
+            "コンペ規約への同意が済んでいません。",
+            f"{rules_url(slug)} で規約に同意してください。",
+        )
+    if status == 429 or "limit" in message.lower():
+        return (
+            "提出回数の上限に達した可能性があります。",
+            "Kaggle の提出一覧で残り回数を確認してください（1日5回まで）。",
+        )
+    if status in (401, 403):
+        return (
+            f"Kaggle が提出を拒否しました（HTTP {status}）: {message}",
+            "APIトークンの権限と、コンペへの参加状態を確認してください。",
+        )
+    return (f"Kaggle API が提出を拒否しました（HTTP {status}）: {message}", "")
 
 
 def _multipart(fields: dict[str, str]) -> tuple[bytes, str]:
@@ -196,6 +225,36 @@ def _multipart(fields: dict[str, str]) -> tuple[bytes, str]:
         )
     chunks.append(f"--{boundary}--\r\n".encode())
     return b"".join(chunks), boundary
+
+
+def check_submit_access(root: Path, slug: str, submission: Path) -> dict[str, Any]:
+    """提出の1段目だけを試し、権限と参加状態を先に確かめる。
+
+    ここで得るアップロードURLは使わずに捨てる。CSVは送らないので提出は発生しない。
+    """
+    headers = auth_header(root)
+    if headers is None:
+        return {
+            "ok": False,
+            "message": "Kaggle の認証情報がありません。",
+            "hint": "KAGGLE_API_TOKEN を .env.local に設定してください。",
+        }
+    try:
+        _json_request(
+            _submission_url(),
+            headers,
+            method="POST",
+            payload={
+                "competitionName": slug,
+                "contentLength": submission.stat().st_size if submission.exists() else 1,
+                "lastModifiedEpochSeconds": int(time.time()),
+                "fileName": "submission.csv",
+            },
+            slug=slug,
+        )
+    except KaggleError as exc:
+        return {"ok": False, "message": str(exc), "hint": exc.hint}
+    return {"ok": True, "message": "提出できます。", "hint": ""}
 
 
 def submit(
@@ -222,6 +281,7 @@ def submit(
             "lastModifiedEpochSeconds": int(stat.st_mtime),
             "fileName": submission.name,
         },
+        slug=slug,
     )
     create_url = start.get("createUrl") or start.get("create_url")
     token = start.get("token")
@@ -265,10 +325,7 @@ def submit(
             result = json.loads(response.read())
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode(errors="replace")
-        raise KaggleError(
-            f"Kaggle API が提出を拒否しました（HTTP {exc.code}）。",
-            _api_error_hint(exc.code, detail),
-        ) from exc
+        raise KaggleError(*explain_api_error(exc.code, detail, slug)) from exc
 
     return {
         "ok": True,

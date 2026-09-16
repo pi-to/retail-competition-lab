@@ -36,6 +36,7 @@ def _parser() -> argparse.ArgumentParser:
         default="Retail Lab submission",
         help="Kaggle の提出一覧に表示する説明",
     )
+    sub.add_parser("preflight", help="提出できる状態か（権限と参加状態）を確かめる")
     sub.add_parser("list", help="登録済みのコンペを見る")
     return parser
 
@@ -72,6 +73,15 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
+
+    if args.command == "preflight":
+        state = kaggle.check_submit_access(
+            root=root,
+            slug=spec.kaggle_slug,
+            submission=output_dir(root, spec.slug) / "submission.csv",
+        )
+        print(json.dumps(state, ensure_ascii=False, indent=2))
+        return 0 if state["ok"] else 1
 
     if args.command == "submit":
         out = output_dir(root, spec.slug)

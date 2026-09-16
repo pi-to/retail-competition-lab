@@ -37,11 +37,15 @@ type Receipt = {
   description: string;
 };
 
+type Preflight = { ok: boolean; message: string; hint?: string };
+
 export function SubmitCard({ result }: { result: Result }) {
   const [confirming, setConfirming] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [preflight, setPreflight] = useState<Preflight | null>(null);
+  const [checking, setChecking] = useState(false);
   const blend = result.models.find((model) => model.id === "blend");
   const activeModels = result.models.filter(
     (model) => model.id !== "blend" && (model.weight ?? 0) > 0
@@ -62,6 +66,27 @@ export function SubmitCard({ result }: { result: Result }) {
   }));
   const ready = result.source === "kaggle" && !submitting;
   const description = `Retail Lab | RMSLE ${blend?.rmsle?.toFixed(4) ?? "unknown"} | ${new Date().toISOString().slice(0, 10)}`;
+
+  /** 確認画面を開くときに、権限と参加状態を先に確かめる。提出はしない。 */
+  async function review() {
+    setConfirming(true);
+    setChecking(true);
+    setPreflight(null);
+    try {
+      const response = await fetch(
+        `/api/kaggle/submit?competition=${result.competition}`,
+        { cache: "no-store" }
+      );
+      setPreflight((await response.json()) as Preflight);
+    } catch (err) {
+      setPreflight({
+        ok: false,
+        message: err instanceof Error ? err.message : "確認できませんでした。",
+      });
+    } finally {
+      setChecking(false);
+    }
+  }
 
   async function submit() {
     setSubmitting(true);
@@ -100,7 +125,7 @@ export function SubmitCard({ result }: { result: Result }) {
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         {!confirming ? (
-          <Button onClick={() => setConfirming(true)} disabled={!ready}>
+          <Button onClick={() => void review()} disabled={!ready}>
             {result.source === "kaggle" ? "提出内容を確認" : "公式データで再計算してください"}
           </Button>
         ) : (
@@ -274,8 +299,47 @@ export function SubmitCard({ result }: { result: Result }) {
               </section>
             </div>
 
+            {checking ? (
+              <p className="text-sm text-muted-foreground">提出できる状態か確認しています…</p>
+            ) : null}
+            {preflight && !preflight.ok ? (
+              <Alert variant="destructive">
+                <AlertTitle>いまは提出できません</AlertTitle>
+                <AlertDescription className="flex flex-col gap-2">
+                  <span>{preflight.message}</span>
+                  {preflight.hint ? <span>{preflight.hint}</span> : null}
+                  <span className="flex flex-wrap gap-3 text-xs">
+                    <a
+                      className="underline"
+                      href="https://www.kaggle.com/settings"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      トークンを作り直す
+                    </a>
+                    <a
+                      className="underline"
+                      href="https://www.kaggle.com/competitions/store-sales-time-series-forecasting/rules"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      コンペに参加する
+                    </a>
+                    <a
+                      className="underline"
+                      href={`/api/submission?competition=${result.competition}`}
+                    >
+                      CSVを落として手で提出する
+                    </a>
+                  </span>
+                </AlertDescription>
+              </Alert>
+            ) : null}
             <div className="flex flex-wrap gap-2">
-              <Button onClick={() => void submit()} disabled={submitting}>
+              <Button
+                onClick={() => void submit()}
+                disabled={submitting || checking || (preflight ? !preflight.ok : false)}
+              >
                 {submitting ? "提出中…" : "この内容でKaggleへ提出"}
               </Button>
               <Button variant="outline" onClick={() => setConfirming(false)} disabled={submitting}>

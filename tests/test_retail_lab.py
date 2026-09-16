@@ -6,7 +6,11 @@ import pytest
 
 from retail_lab import blending, registry
 from retail_lab.competition import CompetitionSpec
-from retail_lab.kaggle import SubmissionValidationError, validate_submission
+from retail_lab.kaggle import (
+    SubmissionValidationError,
+    explain_api_error,
+    validate_submission,
+)
 from retail_lab.metrics import business_metrics, rmsle
 from retail_lab.models import naive
 from retail_lab.validation import split_panel
@@ -200,3 +204,24 @@ def test_submission_validation_rejects_invalid_files(
 
     with pytest.raises(SubmissionValidationError, match=message):
         validate_submission(submission, sample)
+
+
+def test_explain_api_error_names_the_missing_token_scope():
+    """新しい Kaggle トークンは権限が分かれている。どの権限が無いかまで伝える。"""
+    detail = '{"code":403,"message":"Permission \'competitions.participate\' was denied"}'
+    message, hint = explain_api_error(403, detail, "store-sales-time-series-forecasting")
+    assert "competitions.participate" in message
+    assert "Settings" in hint
+
+
+def test_explain_api_error_detects_that_the_competition_was_not_joined():
+    detail = '{"code":400,"message":"You do not have a Team in this Competition."}'
+    message, hint = explain_api_error(400, detail, "store-sales-time-series-forecasting")
+    assert "参加" in message
+    assert "store-sales-time-series-forecasting/rules" in hint
+
+
+def test_explain_api_error_keeps_the_original_message_when_unknown():
+    detail = '{"code":500,"message":"Something broke"}'
+    message, _hint = explain_api_error(500, detail, "store-sales-time-series-forecasting")
+    assert "Something broke" in message
