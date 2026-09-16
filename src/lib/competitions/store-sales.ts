@@ -131,8 +131,8 @@ const storeSales: CompetitionContent = {
       body: "季節ナイーブ（下限）、LightGBM（表）、Chronos-2（基盤モデル）、TimesFM（基盤モデル）を、学習末尾16日で採点する。",
     },
     {
-      title: "勝った方を多く混ぜる",
-      body: "検証 RMSLE の逆数を重みにする。悪いモデルは自動的に薄まるので、人が勘で重みを決めない。",
+      title: "混ぜ方も検証で決める",
+      body: "log 空間で非負の重みを当てる（指標が log だから）。それが単体一位に勝てなければ、混ぜずに単体を出す。人が勘で重みを決めない。",
     },
   ],
   nextSteps: [

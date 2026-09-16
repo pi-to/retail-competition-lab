@@ -92,6 +92,26 @@ def test_inverse_rmsle_weights_ignore_unusable_scores():
     assert blending.inverse_rmsle_weights({"broken": float("nan"), "zero": 0.0}) == {}
 
 
+def test_fitted_weights_favor_the_model_that_matches_the_truth():
+    """当たっているモデルに重みが寄る。log 空間の非負最小二乗なので解は一意。"""
+    truth = pd.DataFrame({"row_id": [1, 2, 3, 4], "target": [10.0, 20.0, 30.0, 40.0]})
+    preds = {
+        "good": pd.DataFrame({"row_id": [1, 2, 3, 4], "pred": [10.0, 20.0, 30.0, 40.0]}),
+        "bad": pd.DataFrame({"row_id": [1, 2, 3, 4], "pred": [1.0, 1.0, 1.0, 1.0]}),
+    }
+    weights = blending.fit_log_weights(preds, truth)
+    assert weights["good"] > weights.get("bad", 0.0)
+
+
+def test_log_blend_of_identical_predictions_is_unchanged():
+    preds = {
+        "a": pd.DataFrame({"row_id": [1, 2], "series_id": ["s", "s"], "pred": [4.0, 9.0]}),
+        "b": pd.DataFrame({"row_id": [1, 2], "series_id": ["s", "s"], "pred": [4.0, 9.0]}),
+    }
+    out = blending.blend(preds, {"a": 0.5, "b": 0.5})
+    assert out["pred"].tolist() == pytest.approx([4.0, 9.0])
+
+
 def test_zero_out_dead_series_silences_discontinued_items():
     history = pd.DataFrame(
         {

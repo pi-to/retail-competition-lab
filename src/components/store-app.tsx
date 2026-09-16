@@ -33,6 +33,12 @@ import {
 import type { CompetitionContent } from "@/lib/competitions";
 import type { KaggleStatus, Result, ResultPayload, RunError, Status } from "@/lib/types";
 
+const STRATEGY_LABEL: Record<string, string> = {
+  rule: "逆RMSLE重み",
+  fitted: "検証で当てた重み",
+  single: "単体そのまま",
+};
+
 export function StoreApp({
   content,
   initialResult,
@@ -255,7 +261,17 @@ export function StoreApp({
                 </div>
                 {best ? (
                   <p className="mt-3 text-sm text-muted-foreground">
-                    単体の一位は {best.title}（{best.rmsle?.toFixed(4)}）。混合が単体一位より悪いときは、弱いモデルを混ぜ過ぎている合図なので重みを見直す。
+                    単体の一位は {best.title}（{best.rmsle?.toFixed(4)}）。
+                    {blend?.candidates ? (
+                      <>
+                        {" "}
+                        混ぜ方の候補は
+                        {Object.entries(blend.candidates)
+                          .map(([name, score]) => ` ${STRATEGY_LABEL[name] ?? name} ${score.toFixed(4)}`)
+                          .join(" /")}
+                        。一番良い{STRATEGY_LABEL[blend.strategy ?? ""] ?? ""}を提出しています。
+                      </>
+                    ) : null}
                   </p>
                 ) : null}
               </CardContent>

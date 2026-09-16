@@ -8,6 +8,7 @@ dependencies = [
     "numpy>=1.26",
     "lightgbm>=4.5",
     "scikit-learn>=1.5",
+    "scipy>=1.14",
     "pyarrow>=17.0",
     "torch>=2.4",
     "chronos-forecasting>=2.0",

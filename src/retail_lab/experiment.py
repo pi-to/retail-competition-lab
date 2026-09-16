@@ -287,26 +287,48 @@ def run_experiment(prepared: Prepared, out_dir: Path, skip_foundation: bool = Fa
         except Exception as exc:  # noqa: BLE001 - 同上
             skipped("timesfm", "TimesFM 2.5", timesfm.CHECKPOINT, timesfm.ORG, exc)
 
-    write_status(out_dir, "blend", "検証 RMSLE の逆数で混合", 90)
-    weights = blending.inverse_rmsle_weights(scores)
-    val_blend = blending.zero_out_dead_series(split.train, blending.blend(val_preds, weights))
-    test_blend = blending.zero_out_dead_series(labeled, blending.blend(test_preds, weights))
-    blend_score = blending.score_against(val_blend, split.val)
+    write_status(out_dir, "blend", "混ぜ方を2通り試して良い方を採る", 90)
+    candidates: dict[str, dict[str, float]] = {
+        "rule": blending.inverse_rmsle_weights(scores),
+        "fitted": blending.fit_log_weights(val_preds, split.val),
+    }
+    blends: dict[str, tuple[pd.DataFrame, pd.DataFrame, float]] = {}
+    for name, weights in candidates.items():
+        val_blend = blending.zero_out_dead_series(split.train, blending.blend(val_preds, weights))
+        test_blend = blending.zero_out_dead_series(labeled, blending.blend(test_preds, weights))
+        blends[name] = (val_blend, test_blend, blending.score_against(val_blend, split.val))
+
+    # 単体で一番良いモデルにも負けるなら、混ぜない方を出す
+    best_single = min(scores, key=lambda k: scores[k]) if scores else None
+    if best_single is not None:
+        blends["single"] = (val_preds[best_single], test_preds[best_single], scores[best_single])
+        candidates["single"] = {best_single: 1.0}
+
+    chosen = min(blends, key=lambda k: blends[k][2])
+    val_blend, test_blend, blend_score = blends[chosen]
+    weights = candidates[chosen]
     blend_business = blending.business_against(val_blend, split.val)
 
     for row in models_meta:
         if row.get("status") == "ok":
             row["weight"] = round(weights.get(row["id"], 0.0), 4)
 
+    notes = {
+        "rule": "検証 RMSLE の逆数を重みにした。",
+        "fitted": "検証窓で RMSLE を最小にする非負の重みを当てた。",
+        "single": f"混ぜると悪化したので {best_single} 単体を採用した。",
+    }
     models_meta.append(
         {
             "id": "blend",
-            "title": "混合 + ゼロ系列",
-            "note": "逆RMSLE重み。直近21日がすべて0の系列は0のまま。",
+            "title": "提出する予測",
+            "note": f"{notes[chosen]}直近21日がすべて0の系列は0のまま。",
             "rmsle": round(blend_score, 5),
             "status": "ok",
             "weight": 1.0,
+            "strategy": chosen,
             "weights": {k: round(v, 4) for k, v in weights.items()},
+            "candidates": {k: round(v[2], 5) for k, v in blends.items()},
             "wape": round(blend_business["wape"], 4),
             "bias": round(blend_business["bias"], 4),
             "under_rate": round(blend_business["under_rate"], 4),

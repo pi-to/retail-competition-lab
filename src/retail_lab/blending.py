@@ -21,7 +21,35 @@ def inverse_rmsle_weights(scores: dict[str, float]) -> dict[str, float]:
     return {k: float(v / total) for k, v in inverse.items()}
 
 
-def blend(pred_map: dict[str, pd.DataFrame], weights: dict[str, float]) -> pd.DataFrame:
+def fit_log_weights(pred_map: dict[str, pd.DataFrame], actual: pd.DataFrame) -> dict[str, float]:
+    """検証窓で RMSLE を最小にする非負の重みを当てる。
+
+    RMSLE は log1p 空間での二乗誤差なので、その空間での非負最小二乗がそのまま
+    最適な混ぜ方になる。推定するのはモデル数（数個）だけで、観測は検証窓の全行
+    （公式データなら28,512行）なので、過学習の心配はほぼない。
+    """
+    from scipy.optimize import nnls
+
+    names = sorted(pred_map)
+    truth = actual[[ROW_ID, TARGET]].sort_values(ROW_ID)
+    columns = []
+    for name in names:
+        frame = pred_map[name][[ROW_ID, PRED]].set_index(ROW_ID).loc[truth[ROW_ID]]
+        columns.append(np.log1p(frame[PRED].clip(lower=0).to_numpy()))
+    matrix = np.column_stack(columns)
+    target = np.log1p(truth[TARGET].clip(lower=0).to_numpy())
+
+    coefficients, _residual = nnls(matrix, target)
+    total = float(coefficients.sum())
+    if total <= 0:
+        return inverse_rmsle_weights({name: 1.0 for name in names})
+    return {name: float(w / total) for name, w in zip(names, coefficients, strict=True) if w > 0}
+
+
+def blend(
+    pred_map: dict[str, pd.DataFrame], weights: dict[str, float], space: str = "log"
+) -> pd.DataFrame:
+    """重み付き平均。指標が log なので既定も log 空間で混ぜる。"""
     base: pd.DataFrame | None = None
     acc: np.ndarray | None = None
     order: np.ndarray | None = None
@@ -31,12 +59,12 @@ def blend(pred_map: dict[str, pd.DataFrame], weights: dict[str, float]) -> pd.Da
             base = frame.drop(columns=[PRED]).copy()
             acc = np.zeros(len(frame), dtype=np.float64)
             order = frame[ROW_ID].to_numpy()
-        aligned = frame.set_index(ROW_ID).loc[order, PRED].to_numpy()
-        acc = acc + weight * aligned
+        values = frame.set_index(ROW_ID).loc[order, PRED].clip(lower=0).to_numpy()
+        acc = acc + weight * (np.log1p(values) if space == "log" else values)
     if base is None or acc is None:
         raise ValueError("混ぜるモデルがありません")
     out = base
-    out[PRED] = np.clip(acc, 0, None)
+    out[PRED] = np.clip(np.expm1(acc) if space == "log" else acc, 0, None)
     return out
 
 

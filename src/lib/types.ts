@@ -11,6 +11,8 @@ export type ModelRow = {
   checkpoint?: string;
   error?: string;
   weights?: Record<string, number>;
+  strategy?: string;
+  candidates?: Record<string, number>;
   top_features?: { feature: string; gain: number }[];
   wape?: number;
   bias?: number;
