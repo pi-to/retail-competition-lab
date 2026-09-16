@@ -28,6 +28,11 @@ def _parser() -> argparse.ArgumentParser:
     run_cmd.add_argument("--out", type=Path, default=None)
     run_cmd.add_argument("--skip-foundation", action="store_true", help="基盤モデルを飛ばす")
     run_cmd.add_argument("--label", default="direct-foundation-v1", help="実験を識別する名前")
+    run_cmd.add_argument(
+        "--reuse-run",
+        default=None,
+        help="指定Runの Chronos / TimesFM 予測を再利用する（タグまたは Run ID）",
+    )
 
     sub.add_parser("fetch", help="Kaggle から公式データを取得する")
     sub.add_parser("status", help="データの取得状況を見る")
@@ -157,12 +162,30 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     out = args.out or run_output_dir(root, spec.slug, args.source)
+    reuse = None
+    if getattr(args, "reuse_run", None):
+        reuse_id = tracking.resolve(out_root, args.reuse_run)
+        reuse = out_root / "runs" / reuse_id
     return _run(
-        root, spec.slug, args.source, out, skip_foundation=args.skip_foundation, label=args.label
+        root,
+        spec.slug,
+        args.source,
+        out,
+        skip_foundation=args.skip_foundation,
+        label=args.label,
+        reuse_run=reuse,
     )
 
 
-def _run(root: Path, slug: str, source: str, out: Path, skip_foundation: bool, label: str) -> int:
+def _run(
+    root: Path,
+    slug: str,
+    source: str,
+    out: Path,
+    skip_foundation: bool,
+    label: str,
+    reuse_run: Path | None = None,
+) -> int:
     """実験を1本走らせる。画面はここが書くファイルだけを見る。"""
     out.mkdir(parents=True, exist_ok=True)
     error_path = out / "error.json"
@@ -172,7 +195,7 @@ def _run(root: Path, slug: str, source: str, out: Path, skip_foundation: bool, l
     write_status(out, "load", "データを読み込みます", 5)
     try:
         prepared = registry.get(slug).prepare(root, source)
-        result = run_experiment(prepared, out, skip_foundation=skip_foundation)
+        result = run_experiment(prepared, out, skip_foundation=skip_foundation, reuse_run=reuse_run)
         run_id = tracking.new_run_id(label)
         result["run_id"] = run_id
         result["method_version"] = label

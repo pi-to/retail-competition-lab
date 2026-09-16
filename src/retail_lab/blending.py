@@ -73,6 +73,29 @@ def score_against(pred: pd.DataFrame, actual: pd.DataFrame) -> float:
     return rmsle(merged[TARGET], merged[PRED])
 
 
+def grouped_rmsle(
+    pred: pd.DataFrame, actual: pd.DataFrame, group: str, *, worst: int = 12
+) -> list[dict[str, float | int | str]]:
+    """検証誤差が大きいグループから順に返す。次に直す場所を決めるため。"""
+    columns = [ROW_ID, TARGET]
+    if group not in actual.columns:
+        return []
+    if group != ROW_ID:
+        columns.append(group)
+    merged = pred.merge(actual[columns], on=ROW_ID, how="inner")
+    rows: list[dict[str, float | int | str]] = []
+    for key, part in merged.groupby(group, sort=False):
+        rows.append(
+            {
+                "group": str(key),
+                "rmsle": round(float(rmsle(part[TARGET], part[PRED])), 5),
+                "n": int(len(part)),
+            }
+        )
+    rows.sort(key=lambda item: -float(item["rmsle"]))
+    return rows[:worst]
+
+
 def business_against(pred: pd.DataFrame, actual: pd.DataFrame) -> dict[str, float]:
     merged = pred.merge(actual[[ROW_ID, TARGET]], on=ROW_ID, how="inner")
     return business_metrics(merged[TARGET], merged[PRED])

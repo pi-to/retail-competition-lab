@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 
 from retail_lab.competition import CandidateModel, Prepared
@@ -33,6 +34,16 @@ def prepare(root: Path, source: str) -> Prepared:
                     "直近1・7・14日の週次リズムを未来漏洩なしで使う。"
                 ),
                 predict=recursive.fit_predict,
+                org="custom",
+            ),
+            CandidateModel(
+                id="recursive_lgbm_no_eq",
+                title="再帰 LightGBM（地震期間を学習から除外）",
+                note=(
+                    "2016年4〜5月の地震需要を学習から外す。"
+                    "予測時の特徴は残し、異常な売上だけを教師に使わない。"
+                ),
+                predict=partial(recursive.fit_predict, drop_earthquake=True),
                 org="custom",
             ),
             CandidateModel(

@@ -18,6 +18,7 @@ from retail_lab import DATE, ROW_ID, SERIES_ID, TARGET, blending
 from retail_lab.competition import Prepared
 from retail_lab.models import chronos, gbdt, naive, timesfm
 from retail_lab.status import write_status
+from retail_lab.tracking import load_cached_preds, write_preds
 from retail_lab.validation import Split, split_panel
 
 JsonDict = dict[str, Any]
@@ -164,7 +165,12 @@ def _client_report(
     }
 
 
-def run_experiment(prepared: Prepared, out_dir: Path, skip_foundation: bool = False) -> JsonDict:
+def run_experiment(
+    prepared: Prepared,
+    out_dir: Path,
+    skip_foundation: bool = False,
+    reuse_run: Path | None = None,
+) -> JsonDict:
     started = time.time()
     spec = prepared.spec
     horizon = spec.horizon
@@ -265,44 +271,72 @@ def run_experiment(prepared: Prepared, out_dir: Path, skip_foundation: bool = Fa
 
     if not skip_foundation:
         try:
-            write_status(out_dir, "chronos", "Chronos-2 を読み込み中", 50)
-            pipe = chronos.load_pipeline()
-            write_status(out_dir, "chronos", f"Chronos-2 が検証窓を予測中（{n_series:,}系列）", 55)
-            chronos_val = chronos.forecast(
-                split.train, split.val, horizon, prepared.covariates, pipe=pipe
-            )
-            write_status(out_dir, "chronos", f"Chronos-2 が提出分を予測中（{n_series:,}系列）", 63)
-            chronos_test = chronos.forecast(
-                labeled, split.future, horizon, prepared.covariates, pipe=pipe
-            )
+            cached = load_cached_preds(reuse_run, "chronos2") if reuse_run else None
+            if cached is not None:
+                write_status(out_dir, "chronos", "Chronos-2 を前回Runから再利用", 55)
+                chronos_val, chronos_test = cached
+            else:
+                write_status(out_dir, "chronos", "Chronos-2 を読み込み中", 50)
+                pipe = chronos.load_pipeline()
+                write_status(
+                    out_dir, "chronos", f"Chronos-2 が検証窓を予測中（{n_series:,}系列）", 55
+                )
+                chronos_val = chronos.forecast(
+                    split.train, split.val, horizon, prepared.covariates, pipe=pipe
+                )
+                write_status(
+                    out_dir, "chronos", f"Chronos-2 が提出分を予測中（{n_series:,}系列）", 63
+                )
+                chronos_test = chronos.forecast(
+                    labeled, split.future, horizon, prepared.covariates, pipe=pipe
+                )
+                del pipe
             register(
                 "chronos2",
                 "Chronos-2",
-                "AWS の時系列基盤モデル。数量の系列に、未来に分かる列を添えて渡す。学習しない。",
+                "AWS の時系列基盤モデル。数量の系列に、未来に分かる列を添えて渡す。学習しない。"
+                + ("前回Runの予測を再利用。" if cached is not None else ""),
                 chronos_val,
                 chronos_test,
-                {"checkpoint": chronos.CHECKPOINT, "org": chronos.ORG},
+                {
+                    "checkpoint": chronos.CHECKPOINT,
+                    "org": chronos.ORG,
+                    "reused": cached is not None,
+                },
             )
-            del pipe
         except Exception as exc:  # noqa: BLE001 - 基盤モデルが落ちても実験は続ける
             skipped("chronos2", "Chronos-2", chronos.CHECKPOINT, chronos.ORG, exc)
 
         try:
-            write_status(out_dir, "timesfm", "TimesFM 2.5 を読み込み中", 72)
-            model = timesfm.load_model(max_horizon=max(32, horizon))
-            write_status(out_dir, "timesfm", f"TimesFM が検証窓を予測中（{n_series:,}系列）", 77)
-            timesfm_val = timesfm.forecast(split.train, split.val, horizon, model=model)
-            write_status(out_dir, "timesfm", f"TimesFM が提出分を予測中（{n_series:,}系列）", 84)
-            timesfm_test = timesfm.forecast(labeled, split.future, horizon, model=model)
+            cached = load_cached_preds(reuse_run, "timesfm") if reuse_run else None
+            if cached is not None:
+                write_status(out_dir, "timesfm", "TimesFM を前回Runから再利用", 77)
+                timesfm_val, timesfm_test = cached
+            else:
+                write_status(out_dir, "timesfm", "TimesFM 2.5 を読み込み中", 72)
+                model = timesfm.load_model(max_horizon=max(32, horizon))
+                write_status(
+                    out_dir, "timesfm", f"TimesFM が検証窓を予測中（{n_series:,}系列）", 77
+                )
+                timesfm_val = timesfm.forecast(split.train, split.val, horizon, model=model)
+                write_status(
+                    out_dir, "timesfm", f"TimesFM が提出分を予測中（{n_series:,}系列）", 84
+                )
+                timesfm_test = timesfm.forecast(labeled, split.future, horizon, model=model)
+                del model
             register(
                 "timesfm",
                 "TimesFM 2.5",
-                "Google の時系列基盤モデル。数量の並びだけを読む。AWS に依存しない対照実験。",
+                "Google の時系列基盤モデル。数量の並びだけを読む。AWS に依存しない対照実験。"
+                + ("前回Runの予測を再利用。" if cached is not None else ""),
                 timesfm_val,
                 timesfm_test,
-                {"checkpoint": timesfm.CHECKPOINT, "org": timesfm.ORG},
+                {
+                    "checkpoint": timesfm.CHECKPOINT,
+                    "org": timesfm.ORG,
+                    "reused": cached is not None,
+                },
             )
-            del model
         except Exception as exc:  # noqa: BLE001 - 同上
             skipped("timesfm", "TimesFM 2.5", timesfm.CHECKPOINT, timesfm.ORG, exc)
 
@@ -383,6 +417,17 @@ def run_experiment(prepared: Prepared, out_dir: Path, skip_foundation: bool = Fa
     )
     submission.to_csv(out_dir / "submission.csv", index=False)
 
+    val_horizon = split.val.copy()
+    val_horizon["horizon"] = (val_horizon[DATE] - val_horizon[DATE].min()).dt.days + 1
+    error_slices: JsonDict = {
+        "horizon": blending.grouped_rmsle(val_blend, val_horizon, "horizon", worst=horizon)
+    }
+    if "family" in split.val.columns:
+        error_slices["family"] = blending.grouped_rmsle(val_blend, split.val, "family")
+    val_preds["blend"] = val_blend
+    test_preds["blend"] = test_blend
+    write_preds(out_dir, val_preds, test_preds)
+
     result: JsonDict = {
         "competition": spec.slug,
         "title": spec.title,
@@ -396,6 +441,7 @@ def run_experiment(prepared: Prepared, out_dir: Path, skip_foundation: bool = Fa
         "metric": "RMSLE",
         "models": models_meta,
         "feature_importance": importance[:16],
+        "error_slices": error_slices,
         "preview": _preview(split, val_preds, val_blend),
         "method": list(spec.method),
         "report": _client_report(prepared, split, models_meta, n_series),

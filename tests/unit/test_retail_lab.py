@@ -91,6 +91,20 @@ def test_seasonal_naive_covers_every_future_row():
     assert (pred["pred"] >= 0).all()
 
 
+def test_grouped_rmsle_lists_the_worst_group_first():
+    pred = pd.DataFrame({"row_id": [1, 2, 3, 4], "pred": [1.0, 1.0, 10.0, 10.0]})
+    actual = pd.DataFrame(
+        {
+            "row_id": [1, 2, 3, 4],
+            "target": [1.0, 1.0, 1.0, 1.0],
+            "family": ["easy", "easy", "hard", "hard"],
+        }
+    )
+    rows = blending.grouped_rmsle(pred, actual, "family")
+    assert rows[0]["group"] == "hard"
+    assert rows[0]["rmsle"] > rows[1]["rmsle"]
+
+
 def test_inverse_rmsle_weights_favor_the_better_model():
     weights = blending.inverse_rmsle_weights({"good": 0.2, "bad": 0.4})
     assert weights["good"] > weights["bad"]
@@ -336,6 +350,21 @@ def test_archive_run_is_immutable_and_listed(tmp_path: Path):
     assert list_runs(out)[0]["run_id"] == "run-a"
     with pytest.raises(FileExistsError):
         archive_run(out, run_id="run-a", label="overwrite")
+
+
+def test_archive_run_keeps_prediction_cache(tmp_path: Path):
+    from retail_lab.tracking import archive_run, load_cached_preds, write_preds
+
+    out = tmp_path / "outputs" / "store-sales"
+    out.mkdir(parents=True)
+    (out / "result.json").write_text(json.dumps(_fake_result(0.4)), encoding="utf-8")
+    (out / "submission.csv").write_text("id,sales\n1,1.0\n", encoding="utf-8")
+    val = pd.DataFrame({"row_id": [1], "pred": [1.5]})
+    write_preds(out, {"chronos2": val}, {"chronos2": val})
+    archive_run(out, run_id="run-a", label="cached")
+    loaded = load_cached_preds(out / "runs" / "run-a", "chronos2")
+    assert loaded is not None
+    assert loaded[0]["pred"].tolist() == [1.5]
 
 
 def test_better_run_becomes_champion_and_worse_run_does_not(tmp_path: Path):
