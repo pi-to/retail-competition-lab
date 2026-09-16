@@ -360,6 +360,8 @@ def run_experiment(
     chosen_horizon_weights = choice.get("weights_by_horizon")
     chosen_family_weights = choice.get("weights_by_family")
     best_score = float(choice["score"])
+    holdout_score = choice.get("holdout_score")
+    alpha = float(choice.get("alpha", 1.0))
     best_single = str(choice["best_single"])
     per_strategy: dict[str, float] = choice["candidates"]
     blend_business = blending.business_against(val_blend, split.val)
@@ -373,6 +375,7 @@ def run_experiment(
         "fitted": "検証窓で RMSLE を最小にする非負の重みを当てた。",
         "fitted_horizon": "予測日ごとに非負の重みを当てた。再帰の後半劣化を日別に補う。",
         "fitted_family": "商品ファミリーごとに非負の重みを当てた。系統ごとの当たり方の違いを残す。",
+        "fitted_family_shrunk": "ファミリー別の重みを全体の重みへ少し寄せた。",
         "single": f"混ぜると悪化したので {best_single} 単体を採用した。",
     }
     zero_note = (
@@ -380,12 +383,19 @@ def run_experiment(
         if zero_window
         else "ゼロ系列の後処理は、検証窓で悪化したので使わない。"
     )
+    shrink_note = (
+        f"ファミリー別の重みは全体へ{(1 - alpha) * 100:.0f}%寄せた。" if alpha < 1.0 else ""
+    )
     models_meta.append(
         {
             "id": "blend",
             "title": "提出する予測",
-            "note": f"{notes[strategy]}{zero_note}",
+            "note": f"{notes[strategy]}{shrink_note}{zero_note}",
             "rmsle": round(best_score, 5),
+            "holdout_rmsle": (
+                round(float(holdout_score), 5) if holdout_score is not None else None
+            ),
+            "shrinkage": round(alpha, 3),
             "status": "ok",
             "weight": 1.0,
             "strategy": strategy,
@@ -458,6 +468,35 @@ def run_experiment(
     return result
 
 
+def holdout_score_of_run(prepared: Prepared, run_dir: Path) -> float:
+    """保存済み予測から、隠して採点した点数だけを計算する。成果物は書き換えない。
+
+    過去Runと現在のRunを同じ物差しで比べるために使う。
+    """
+    from retail_lab.tracking import PRED_DIR
+
+    pred_dir = run_dir / PRED_DIR
+    val_preds: dict[str, pd.DataFrame] = {}
+    test_preds: dict[str, pd.DataFrame] = {}
+    for path in sorted(pred_dir.glob("*_val.parquet")):
+        name = path.name.removesuffix("_val.parquet")
+        test_path = pred_dir / f"{name}_test.parquet"
+        if name == "blend" or not test_path.exists():
+            continue
+        val_preds[name] = pd.read_parquet(path)
+        test_preds[name] = pd.read_parquet(test_path)
+    if not val_preds:
+        raise FileNotFoundError(f"再利用できる予測がありません: {pred_dir}")
+
+    split = split_panel(prepared.panel, prepared.spec.horizon)
+    val_preds, test_preds = blending.with_pooled_candidates(val_preds, test_preds)
+    choice = blending.choose_blend(val_preds, test_preds, split.train, split.val, split.labeled)
+    holdout = choice.get("holdout_score")
+    if holdout is None:
+        raise ValueError("この検証窓では隠して採点できません")
+    return float(holdout)
+
+
 def reblend_cached(prepared: Prepared, out_dir: Path, source_run: Path) -> JsonDict:
     """保存済みのモデル予測だけを読み、混ぜ方を検証窓でやり直す。"""
     from retail_lab.tracking import PRED_DIR
@@ -489,6 +528,8 @@ def reblend_cached(prepared: Prepared, out_dir: Path, source_run: Path) -> JsonD
     chosen_horizon_weights = choice.get("weights_by_horizon")
     chosen_family_weights = choice.get("weights_by_family")
     best_score = float(choice["score"])
+    holdout_score = choice.get("holdout_score")
+    alpha = float(choice.get("alpha", 1.0))
     best_single = str(choice["best_single"])
     per_strategy: dict[str, float] = choice["candidates"]
     blend_business = blending.business_against(val_blend, split.val)
@@ -518,6 +559,7 @@ def reblend_cached(prepared: Prepared, out_dir: Path, source_run: Path) -> JsonD
         "fitted": "検証窓で RMSLE を最小にする非負の重みを当てた。",
         "fitted_horizon": "予測日ごとに非負の重みを当てた。再帰の後半劣化を日別に補う。",
         "fitted_family": "商品ファミリーごとに非負の重みを当てた。系統ごとの当たり方の違いを残す。",
+        "fitted_family_shrunk": "ファミリー別の重みを全体の重みへ少し寄せた。",
         "single": f"混ぜると悪化したので {best_single} 単体を採用した。",
     }
     zero_note = (
@@ -525,12 +567,19 @@ def reblend_cached(prepared: Prepared, out_dir: Path, source_run: Path) -> JsonD
         if zero_window
         else "ゼロ系列の後処理は、検証窓で悪化したので使わない。"
     )
+    shrink_note = (
+        f"ファミリー別の重みは全体へ{(1 - alpha) * 100:.0f}%寄せた。" if alpha < 1.0 else ""
+    )
     models_meta.append(
         {
             "id": "blend",
             "title": "提出する予測",
-            "note": f"{notes[strategy]}{zero_note}",
+            "note": f"{notes[strategy]}{shrink_note}{zero_note}",
             "rmsle": round(best_score, 5),
+            "holdout_rmsle": (
+                round(float(holdout_score), 5) if holdout_score is not None else None
+            ),
+            "shrinkage": round(alpha, 3),
             "status": "ok",
             "weight": 1.0,
             "strategy": strategy,

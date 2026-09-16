@@ -11,7 +11,7 @@ from pathlib import Path
 
 from retail_lab import kaggle, registry, tracking
 from retail_lab.competition import data_dir, output_dir, run_output_dir
-from retail_lab.experiment import reblend_cached, run_experiment
+from retail_lab.experiment import holdout_score_of_run, reblend_cached, run_experiment
 from retail_lab.status import write_status
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -38,6 +38,9 @@ def _parser() -> argparse.ArgumentParser:
     reblend_cmd.add_argument("--from-run", default="champion")
     reblend_cmd.add_argument("--label", default="reblend")
     reblend_cmd.add_argument("--out", type=Path, default=None)
+    sub.add_parser(
+        "rescore", help="保存済みRunに『隠して採点した点数』を入れて物差しを揃える"
+    )
     sub.add_parser("status", help="データの取得状況を見る")
     submit_cmd = sub.add_parser("submit", help="生成済みの submission.csv を Kaggle に提出する")
     submit_cmd.add_argument(
@@ -118,6 +121,28 @@ def main(argv: list[str] | None = None) -> int:
                 ensure_ascii=False,
             )
         )
+        return 0
+
+    if args.command == "rescore":
+        prepared = registry.get(spec.slug).prepare(root, "kaggle")
+        report: list[dict[str, object]] = []
+        for record in tracking.list_runs(out_root):
+            run_id = str(record["run_id"])
+            run_dir = out_root / "runs" / run_id
+            try:
+                score = holdout_score_of_run(prepared, run_dir)
+            except (FileNotFoundError, ValueError) as exc:
+                report.append({"run_id": run_id, "error": f"{type(exc).__name__}: {exc}"})
+                continue
+            tracking.set_holdout(out_root, run_id, score)
+            report.append(
+                {
+                    "run_id": run_id,
+                    "local_rmsle": record.get("local_rmsle"),
+                    "holdout_rmsle": round(score, 5),
+                }
+            )
+        print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "status":

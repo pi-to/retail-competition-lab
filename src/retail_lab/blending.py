@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -134,7 +135,7 @@ def blend_by_family(
 
 def pool_predictions(
     pred_map: dict[str, pd.DataFrame],
-    names: list[str] | None = None,
+    names: Sequence[str] | None = None,
     *,
     how: str = "min",
 ) -> pd.DataFrame:
@@ -189,6 +190,114 @@ def with_pooled_candidates(
     return val_out, test_out
 
 
+def shrink_weights(
+    group_weights: dict[str, dict[str, float]],
+    global_weights: dict[str, float],
+    alpha: float,
+) -> dict[str, dict[str, float]]:
+    """グループ別の重みを全体の重みへ寄せる。少数行のグループの当てはめ過ぎを抑える。"""
+    names = sorted({*global_weights, *(n for part in group_weights.values() for n in part)})
+    shrunk: dict[str, dict[str, float]] = {}
+    for group, weights in group_weights.items():
+        mixed = {
+            name: alpha * weights.get(name, 0.0) + (1.0 - alpha) * global_weights.get(name, 0.0)
+            for name in names
+        }
+        positive = {name: value for name, value in mixed.items() if value > 0}
+        shrunk[group] = positive or dict(global_weights)
+    return shrunk
+
+
+def series_halves(pred_map: dict[str, pd.DataFrame]) -> tuple[set[Any], set[Any]]:
+    """系列を2つに割る。ファミリーごとに1つ飛ばしで分けるので、両側に全ファミリーが残る。
+
+    分けられないとき（系列が少ない、ファミリーが片側にしかない）は空を返す。
+    呼び出し側はそれを「隠して採点できない」合図として扱う。
+    """
+    sample = next(iter(pred_map.values()))
+    if SERIES_ID not in sample.columns:
+        return set(), set()
+    frame = sample[[ROW_ID, SERIES_ID]].copy()
+    frame["_family"] = _family_of(sample).to_numpy()
+    left: set[str] = set()
+    for _family, part in frame.groupby("_family"):
+        series = sorted(part[SERIES_ID].astype(str).unique())
+        if len(series) < 2:
+            return set(), set()
+        left.update(series[0::2])
+    fit_mask = frame[SERIES_ID].astype(str).isin(left)
+    fit_ids = set(frame.loc[fit_mask, ROW_ID])
+    hold_ids = set(frame.loc[~fit_mask, ROW_ID])
+    if not fit_ids or not hold_ids:
+        return set(), set()
+    return fit_ids, hold_ids
+
+
+def _subset(pred_map: dict[str, pd.DataFrame], row_ids: set[Any]) -> dict[str, pd.DataFrame]:
+    return {name: frame[frame[ROW_ID].isin(row_ids)] for name, frame in pred_map.items()}
+
+
+def _fit_plan(
+    strategy: str,
+    pred_map: dict[str, pd.DataFrame],
+    actual: pd.DataFrame,
+    alpha: float = 1.0,
+) -> dict[str, Any]:
+    """混ぜ方を1つ当てはめる。適用に必要なものだけ返す。"""
+    if strategy == "rule":
+        scores = {name: score_against(frame, actual) for name, frame in pred_map.items()}
+        return {"kind": "flat", "weights": inverse_rmsle_weights(scores)}
+    if strategy == "fitted":
+        return {"kind": "flat", "weights": fit_log_weights(pred_map, actual)}
+    if strategy == "single":
+        scores = {name: score_against(frame, actual) for name, frame in pred_map.items()}
+        best = min(scores, key=lambda name: scores[name])
+        return {"kind": "flat", "weights": {best: 1.0}}
+    if strategy == "fitted_horizon":
+        return {
+            "kind": "horizon",
+            "by_horizon": fit_log_weights_by_horizon(
+                pred_map, actual, prediction_origin(pred_map)
+            ),
+        }
+    if strategy == "fitted_family":
+        by_family = fit_log_weights_by_family(pred_map, actual)
+        if alpha < 1.0:
+            by_family = shrink_weights(by_family, fit_log_weights(pred_map, actual), alpha)
+        return {"kind": "family", "by_family": by_family, "alpha": alpha}
+    raise ValueError(f"未対応の混ぜ方です: {strategy}")
+
+
+def _apply_plan(plan: dict[str, Any], pred_map: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    if plan["kind"] == "flat":
+        return blend(pred_map, plan["weights"])
+    if plan["kind"] == "horizon":
+        return blend_by_horizon(pred_map, plan["by_horizon"], prediction_origin(pred_map))
+    return blend_by_family(pred_map, plan["by_family"])
+
+
+def _mean_weights(plan: dict[str, Any], names: list[str]) -> dict[str, float]:
+    """画面に出す代表値。グループ別のときは平均を見せる。"""
+    if plan["kind"] == "flat":
+        return dict(plan["weights"])
+    groups = plan["by_horizon"] if plan["kind"] == "horizon" else plan["by_family"]
+    return {
+        name: float(np.mean([part.get(name, 0.0) for part in groups.values()] or [0.0]))
+        for name in names
+    }
+
+
+STRATEGY_PLANS: tuple[tuple[str, float], ...] = (
+    ("rule", 1.0),
+    ("fitted", 1.0),
+    ("single", 1.0),
+    ("fitted_horizon", 1.0),
+    ("fitted_family", 1.0),
+    ("fitted_family", 0.85),
+    ("fitted_family", 0.7),
+)
+
+
 def choose_blend(
     val_preds: dict[str, pd.DataFrame],
     test_preds: dict[str, pd.DataFrame],
@@ -197,78 +306,79 @@ def choose_blend(
     labeled: pd.DataFrame,
     windows: tuple[int, ...] = (0, 3, 7, 14, 21),
 ) -> dict[str, Any]:
-    """検証窓で混ぜ方とゼロ窓を選ぶ。日別重みも候補に入れる。"""
+    """混ぜ方とゼロ窓を選ぶ。
+
+    重みを当てはめた同じ行で選ぶと、グループ別の重みが必ず有利に見える。
+    そこで系列を半分に割り、片方で当てはめ、もう片方で採点した点数で選ぶ。
+    選んだ後だけ、検証窓の全行で当てはめ直して提出用の予測を作る。
+    """
     scores = {name: score_against(frame, val) for name, frame in val_preds.items()}
     best_single = min(scores, key=lambda name: scores[name])
-    origin_val = prediction_origin(val_preds)
-    origin_test = prediction_origin(test_preds)
-    horizon_weights = fit_log_weights_by_horizon(val_preds, val, origin_val)
-    family_weights = fit_log_weights_by_family(val_preds, val)
-    mean_horizon = {
-        name: float(np.mean([part.get(name, 0.0) for part in horizon_weights.values()] or [0.0]))
-        for name in val_preds
-    }
-    mean_family = {
-        name: float(np.mean([part.get(name, 0.0) for part in family_weights.values()] or [0.0]))
-        for name in val_preds
-    }
-    options: dict[str, tuple[pd.DataFrame, pd.DataFrame, dict[str, float]]] = {
-        "rule": (
-            blend(val_preds, inverse_rmsle_weights(scores)),
-            blend(test_preds, inverse_rmsle_weights(scores)),
-            inverse_rmsle_weights(scores),
-        ),
-        "fitted": (
-            blend(val_preds, fit_log_weights(val_preds, val)),
-            blend(test_preds, fit_log_weights(val_preds, val)),
-            fit_log_weights(val_preds, val),
-        ),
-        "single": (
-            blend(val_preds, {best_single: 1.0}),
-            blend(test_preds, {best_single: 1.0}),
-            {best_single: 1.0},
-        ),
-        "fitted_horizon": (
-            blend_by_horizon(val_preds, horizon_weights, origin_val),
-            blend_by_horizon(test_preds, horizon_weights, origin_test),
-            mean_horizon,
-        ),
-        "fitted_family": (
-            blend_by_family(val_preds, family_weights),
-            blend_by_family(test_preds, family_weights),
-            mean_family,
-        ),
-    }
+    names = sorted(val_preds)
+    fit_ids, score_ids = series_halves(val_preds)
+    fit_preds, hold_preds = _subset(val_preds, fit_ids), _subset(val_preds, score_ids)
+    fit_actual = val[val[ROW_ID].isin(fit_ids)]
+    hold_actual = val[val[ROW_ID].isin(score_ids)]
 
-    best_score = float("inf")
-    chosen: dict[str, Any] | None = None
-    per_strategy: dict[str, float] = {}
-    for name, (val_raw, test_raw, weights) in options.items():
+    honest: dict[tuple[str, float, int], float] = {}
+    plans = STRATEGY_PLANS if (fit_ids and score_ids) else ()
+    for strategy, alpha in plans:
+        try:
+            plan = _fit_plan(strategy, fit_preds, fit_actual, alpha)
+            raw = _apply_plan(plan, hold_preds)
+        except (ValueError, KeyError):
+            continue
         for window in windows:
-            val_candidate = zero_out_dead_series(train, val_raw, window) if window else val_raw
-            score = score_against(val_candidate, val)
-            per_strategy[name] = min(per_strategy.get(name, float("inf")), score)
-            if score < best_score:
-                best_score = score
-                test_candidate = (
-                    zero_out_dead_series(labeled, test_raw, window) if window else test_raw
-                )
-                chosen = {
-                    "strategy": name,
-                    "zero_window": window,
-                    "val": val_candidate,
-                    "test": test_candidate,
-                    "weights": weights,
-                    "weights_by_horizon": horizon_weights if name == "fitted_horizon" else None,
-                    "weights_by_family": family_weights if name == "fitted_family" else None,
-                    "best_single": best_single,
-                }
-    if chosen is None:
-        raise ValueError("混合候補がありません")
-    chosen["score"] = best_score
-    chosen["candidates"] = per_strategy
-    chosen["model_scores"] = scores
-    return chosen
+            candidate = zero_out_dead_series(train, raw, window) if window else raw
+            honest[(strategy, alpha, window)] = score_against(candidate, hold_actual)
+
+    if honest:
+        key = min(honest, key=lambda item: honest[item])
+        holdout_score: float | None = honest[key]
+    else:
+        # 系列が少なすぎて隠して採点できないときだけ、当てはめた点数で選ぶ。
+        in_sample: dict[tuple[str, float, int], float] = {}
+        for strategy, alpha in STRATEGY_PLANS:
+            try:
+                plan = _fit_plan(strategy, val_preds, val, alpha)
+                raw = _apply_plan(plan, val_preds)
+            except (ValueError, KeyError):
+                continue
+            for window in windows:
+                candidate = zero_out_dead_series(train, raw, window) if window else raw
+                in_sample[(strategy, alpha, window)] = score_against(candidate, val)
+        if not in_sample:
+            raise ValueError("混合候補がありません")
+        key = min(in_sample, key=lambda item: in_sample[item])
+        holdout_score = None
+
+    strategy, alpha, window = key
+    plan = _fit_plan(strategy, val_preds, val, alpha)
+    val_raw = _apply_plan(plan, val_preds)
+    test_raw = _apply_plan(plan, test_preds)
+    val_blend = zero_out_dead_series(train, val_raw, window) if window else val_raw
+    test_blend = zero_out_dead_series(labeled, test_raw, window) if window else test_raw
+
+    per_strategy: dict[str, float] = {}
+    for (name, a, _window), value in honest.items():
+        label = name if a == 1.0 else f"{name}_shrunk{a:g}"
+        per_strategy[label] = min(per_strategy.get(label, float("inf")), value)
+
+    return {
+        "strategy": strategy,
+        "alpha": alpha,
+        "zero_window": window,
+        "val": val_blend,
+        "test": test_blend,
+        "weights": _mean_weights(plan, names),
+        "weights_by_horizon": plan.get("by_horizon"),
+        "weights_by_family": plan.get("by_family"),
+        "best_single": best_single,
+        "score": score_against(val_blend, val),
+        "holdout_score": holdout_score,
+        "candidates": per_strategy,
+        "model_scores": scores,
+    }
 
 
 def blend(

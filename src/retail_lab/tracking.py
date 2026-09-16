@@ -72,11 +72,32 @@ def _atomic_json(path: Path, value: Any) -> None:
         Path(temporary).unlink(missing_ok=True)
 
 
-def _score(result: JsonDict) -> float:
+def _blend_row(result: JsonDict) -> JsonDict:
     for model in result.get("models", []):
         if model.get("id") == "blend":
-            return float(model["rmsle"])
+            return model
     raise ValueError("result.json に提出候補の RMSLE がありません")
+
+
+def _score(result: JsonDict) -> float:
+    return float(_blend_row(result)["rmsle"])
+
+
+def _holdout(result: JsonDict) -> float | None:
+    value = _blend_row(result).get("holdout_rmsle")
+    return float(value) if value is not None else None
+
+
+def comparable_score(record: JsonDict) -> float:
+    """Run同士を比べる点数。
+
+    混合の重みを当てはめた行で測った点数は、グループ別の重みほど良く見える。
+    そこで、隠して採点した点数があるRunはそれを使う。両方にあるときだけ比べる。
+    """
+    holdout = record.get("holdout_rmsle")
+    if holdout is not None:
+        return float(holdout)
+    return float(record["local_rmsle"])
 
 
 def archive_run(out: Path, run_id: str, label: str) -> JsonDict:
@@ -94,6 +115,7 @@ def archive_run(out: Path, run_id: str, label: str) -> JsonDict:
         "label": label,
         "created_at": datetime.now(UTC).isoformat(),
         "local_rmsle": _score(result),
+        "holdout_rmsle": _holdout(result),
         "leaderboard": None,
         "source": result.get("source"),
         "method_version": result.get("method_version", label),
@@ -188,7 +210,7 @@ def consider_champion(out: Path, run_id: str) -> bool:
     """ローカル検証が改善したRunだけをChampionへ昇格する。"""
     candidate: JsonDict = _read_json(out / "runs" / run_id / "run.json", {})
     current = champion(out)
-    if current is None or candidate["local_rmsle"] < current["local_rmsle"]:
+    if current is None or comparable_score(candidate) < comparable_score(current):
         if current is not None:
             tag_run(out, "previous-champion", current["run_id"])
         promote_run(out, run_id)
@@ -199,6 +221,17 @@ def consider_champion(out: Path, run_id: str) -> bool:
     # 実験中にトップレベルへ書かれた悪い成果物をChampionに戻す
     promote_run(out, current["run_id"])
     return False
+
+
+def set_holdout(out: Path, run_id: str, score: float) -> JsonDict:
+    """隠して採点した点数を、既存Runへ後から入れる。比較の物差しを揃えるため。"""
+    path = out / "runs" / run_id / "run.json"
+    record: JsonDict = _read_json(path, {})
+    if not record:
+        raise KeyError(f"Run がありません: {run_id}")
+    record["holdout_rmsle"] = float(score)
+    _atomic_json(path, record)
+    return record
 
 
 def set_leaderboard(out: Path, ref: str, score: float) -> JsonDict:

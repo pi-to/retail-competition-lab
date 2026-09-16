@@ -206,6 +206,75 @@ def test_choose_blend_prefers_family_weights_when_they_win():
     )
 
 
+TOY_TRUTH = {"A": 10.0, "B": 40.0, "C": 100.0}
+# 1組の重みでは3ファミリーすべてに合わせられない。ファミリー別なら合わせられる。
+TOY_PREDS = {"early": {"A": 10.0, "B": 1.0, "C": 5.0}, "late": {"A": 1.0, "B": 40.0, "C": 5.0}}
+
+
+def _family_panel_preds(noise: float = 0.0) -> tuple[dict[str, pd.DataFrame], pd.DataFrame]:
+    """3ファミリー×6店舗の予測。ファミリーごとに当たるモデルが違う。"""
+    rows = []
+    row_id = 0
+    for family, target in TOY_TRUTH.items():
+        for store in range(1, 7):
+            for day in range(2):
+                rows.append(
+                    {
+                        "row_id": row_id,
+                        "series_id": f"{store}::{family}",
+                        "date": pd.Timestamp("2017-08-16") + pd.Timedelta(days=day),
+                        "target": target,
+                    }
+                )
+                row_id += 1
+    truth = pd.DataFrame(rows)
+    families = truth["series_id"].str.split("::").str[-1]
+    rng = np.random.default_rng(0)
+    preds = {}
+    for name, by_family in TOY_PREDS.items():
+        frame = truth[["row_id", "series_id", "date"]].copy()
+        frame["pred"] = families.map(by_family).to_numpy()
+        frame["pred"] = frame["pred"] * (1 + noise * rng.standard_normal(len(frame)))
+        preds[name] = frame
+    return preds, truth
+
+
+def test_choose_blend_reports_a_holdout_score_from_unseen_series():
+    """重みを当てはめた行では選ばない。系列を割って、見ていない側で採点する。"""
+    preds, truth = _family_panel_preds(noise=0.05)
+    train = pd.DataFrame({"date": pd.to_datetime(["2017-08-15"])})
+
+    choice = blending.choose_blend(preds, preds, train, truth, truth)
+
+    assert choice["strategy"] == "fitted_family"
+    assert choice["holdout_score"] is not None
+    assert choice["holdout_score"] >= choice["score"]
+    assert set(choice["candidates"]) >= {"fitted", "fitted_family"}
+
+
+def test_series_halves_keep_every_family_on_both_sides():
+    preds, _truth = _family_panel_preds()
+    fit_ids, hold_ids = blending.series_halves(preds)
+    frame = preds["early"]
+    families = frame["series_id"].str.split("::").str[-1]
+    fit_families = set(families[frame["row_id"].isin(fit_ids)])
+    hold_families = set(families[frame["row_id"].isin(hold_ids)])
+
+    assert fit_families == hold_families == set(TOY_TRUTH)
+    assert not fit_ids & hold_ids
+
+
+def test_shrink_weights_pulls_group_weights_toward_the_global_mix():
+    shrunk = blending.shrink_weights({"g": {"a": 1.0}}, {"a": 0.5, "b": 0.5}, 0.5)
+    assert shrunk["g"]["a"] == pytest.approx(0.75)
+    assert shrunk["g"]["b"] == pytest.approx(0.25)
+
+
+def test_shrink_weights_keeps_the_group_mix_when_alpha_is_one():
+    shrunk = blending.shrink_weights({"g": {"a": 1.0}}, {"b": 1.0}, 1.0)
+    assert shrunk["g"] == {"a": 1.0}
+
+
 def test_pool_predictions_min_is_never_above_any_member():
     preds = {
         "a": pd.DataFrame(
@@ -498,6 +567,28 @@ def test_archive_run_keeps_prediction_cache(tmp_path: Path):
     loaded = load_cached_preds(out / "runs" / "run-a", "chronos2")
     assert loaded is not None
     assert loaded[0]["pred"].tolist() == [1.5]
+
+
+def test_champion_uses_the_holdout_score_when_both_runs_have_one(tmp_path: Path):
+    """当てはめた点数が良くても、隠して採点した点数が悪いRunは昇格させない。"""
+    from retail_lab.tracking import archive_run, champion, consider_champion, set_holdout
+
+    out = tmp_path / "outputs" / "store-sales"
+    out.mkdir(parents=True)
+    for run_id, fitted, holdout in (("old", 0.40, 0.42), ("new", 0.38, 0.45)):
+        result = _fake_result(fitted, run_id)
+        for model in result["models"]:
+            if model["id"] == "blend":
+                model["holdout_rmsle"] = holdout
+        (out / "result.json").write_text(json.dumps(result), encoding="utf-8")
+        (out / "submission.csv").write_text(f"id,sales\n1,{fitted}\n", encoding="utf-8")
+        archive_run(out, run_id=run_id, label=run_id)
+        consider_champion(out, run_id)
+
+    assert champion(out)["run_id"] == "old"
+    set_holdout(out, "new", 0.41)
+    assert consider_champion(out, "new") is True
+    assert champion(out)["run_id"] == "new"
 
 
 def test_better_run_becomes_champion_and_worse_run_does_not(tmp_path: Path):
