@@ -171,6 +171,8 @@ def fit_predict(
     objective: str = "regression",
     tweedie_variance_power: float = 1.2,
     intermittent: bool = False,
+    learning_rate: float = 0.045,
+    num_leaves: int = 31,
 ) -> tuple[pd.DataFrame, list[dict[str, float | str]]]:
     """ファミリーごとに学習し、未来を日ごとに再帰予測する。
 
@@ -208,8 +210,8 @@ def fit_predict(
 
         params: dict[str, Any] = {
             "n_estimators": n_estimators,
-            "learning_rate": 0.045,
-            "num_leaves": 31,
+            "learning_rate": learning_rate,
+            "num_leaves": num_leaves,
             "max_depth": -1,
             "min_child_samples": 30,
             "subsample": 0.85,

@@ -84,6 +84,37 @@ def prepare(root: Path, source: str) -> Prepared:
                 org="custom",
             ),
             CandidateModel(
+                id="recursive_intermittent_deep",
+                title="再帰 LightGBM（間欠特徴・細かい木）",
+                note=(
+                    "同じ特徴を、葉63・学習率0.03・木560本で学習する。"
+                    "外れ方が浅い木と違うので、混ぜると補い合う。"
+                ),
+                predict=partial(
+                    recursive.fit_predict,
+                    intermittent=True,
+                    n_estimators=560,
+                    learning_rate=0.03,
+                    num_leaves=63,
+                ),
+                org="custom",
+            ),
+            CandidateModel(
+                id="recursive_intermittent_tweedie",
+                title="再帰 LightGBM（間欠特徴・Tweedie）",
+                note=(
+                    "ゼロ込みの売上分布に合う Tweedie で、間欠特徴つきの365日学習。"
+                    "下着売り場のような売れない日が多い系統向け。"
+                ),
+                predict=partial(
+                    recursive.fit_predict,
+                    intermittent=True,
+                    context_days=365,
+                    objective="tweedie",
+                ),
+                org="custom",
+            ),
+            CandidateModel(
                 id="direct_horizon_lgbm",
                 title="予測距離別 LightGBM",
                 note=(
