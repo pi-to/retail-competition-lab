@@ -117,7 +117,7 @@ export const STORE_SALES_EXPERIMENTS: ExperimentInsight[] = [
   },
   {
     id: "recursive320-direct-horizon-v1",
-    tag: "champion / latest",
+    tag: "previous-champion",
     title: "320本の再帰と予測距離別モデルを混ぜる",
     localRmsle: 0.38893,
     outcome: "改善",
@@ -125,6 +125,17 @@ export const STORE_SALES_EXPERIMENTS: ExperimentInsight[] = [
     result: "混合RMSLE 0.38893。重みは再帰53%、Chronos-2 33%、距離別13%。一括LightGBMとTimesFMは0。提出CSVはヘッダ+28512行。",
     why: "距離別モデルは単体では再帰に負けるが、誤差の連鎖がない日の予測がChronos-2や再帰と補い合ったため、検証の非負最小二乗が正の重みを付けたと考える。",
     learned: "単体で負けても、違う外れ方なら混ぜて良くなる。公開LBは未記録なので、参加できるアカウントで次に提出する。",
+  },
+  {
+    id: "exog-holiday-promo-v1",
+    tag: "champion / latest",
+    title: "地域祝日・前夜・プロモ先行を足す",
+    localRmsle: 0.3859,
+    outcome: "改善",
+    tried: "地域祝日、祝日前夜、祝日までの日数、プロモの1・7日前と1・7日後を特徴に足し、Chronos-2へ地元・地域・前夜も渡した。売上ラグは増やしていない。",
+    result: "混合RMSLE 0.3859。再帰0.39267、一括LightGBM 0.41844、距離別0.41342、Chronos-2 0.40401。重みは再帰51%、Chronos-2 30%、一括11%、距離別8%。",
+    why: "検証窓と提出窓の両方に祝日があり、プロモは提出CSVに未来分が載っている。既知の外生変数を捨てていたのがボトルネックだったと考える。",
+    learned: "未来漏洩にならない情報は先に使い切る。次は地震期間を学習から外す対照と、公開LBでの確認。",
   },
   {
     id: "foundation-blend-v1",
