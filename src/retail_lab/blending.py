@@ -391,6 +391,127 @@ def _two_fold_score(
     return total / 2.0
 
 
+def family_row_ids(pred_map: dict[str, pd.DataFrame]) -> dict[str, set[Any]]:
+    """売り場ごとの行。売り場別に顔ぶれを選ぶために使う。"""
+    sample = next(iter(pred_map.values()))
+    families = _family_of(sample)
+    return {
+        str(family): set(sample.loc[families == family, ROW_ID]) for family in families.unique()
+    }
+
+
+def _family_fold_score(
+    pred_map: dict[str, pd.DataFrame],
+    val: pd.DataFrame,
+    halves: tuple[set[Any], set[Any]],
+    train: pd.DataFrame,
+    window: int,
+    floor: float,
+    rows: set[Any],
+) -> float:
+    """1つの売り場だけを、見ていない系列で採点する。"""
+    total = 0.0
+    for fit_ids, hold_ids in (halves, (halves[1], halves[0])):
+        fit = fit_ids & rows
+        hold = hold_ids & rows
+        if not fit or not hold:
+            raise ValueError("片側に行がありません")
+        fit_actual = val[val[ROW_ID].isin(fit)]
+        weights = fit_log_weights(_subset(pred_map, fit), fit_actual)
+        held = blend(_subset(pred_map, hold), weights)
+        held = zero_out_dead_series(train, held, window) if window else held
+        held = snap_small_to_zero(held, floor)
+        total += score_against(held, val[val[ROW_ID].isin(hold)])
+    return total / 2.0
+
+
+def prune_by_family(
+    pred_map: dict[str, pd.DataFrame],
+    val: pd.DataFrame,
+    halves: tuple[set[Any], set[Any]],
+    train: pd.DataFrame,
+    window: int,
+    floor: float = 0.0,
+    minimum: int = 1,
+) -> dict[str, list[str]]:
+    """売り場ごとに顔ぶれを選ぶ。
+
+    売り場ごとに重みを当てるので、1つの売り場を1モデルに任せてもよい（minimum=1）。
+
+    全体で1つの顔ぶれに絞ると、下着売り場のように少数派の棚にだけ効くモデルが
+    消えてしまう。売り場ごとに「外して良くなるモデル」を落とせば、その棚だけで
+    価値があるモデルを残せる。採点はどの売り場でも見ていない系列で行う。
+    """
+    subsets: dict[str, list[str]] = {}
+    for family, rows in family_row_ids(pred_map).items():
+        kept = dict(pred_map)
+        try:
+            best = _family_fold_score(kept, val, halves, train, window, floor, rows)
+        except (ValueError, KeyError):
+            subsets[family] = sorted(pred_map)
+            continue
+        while len(kept) > minimum:
+            trials: dict[str, float] = {}
+            for name in sorted(kept):
+                trial = {key: frame for key, frame in kept.items() if key != name}
+                try:
+                    trials[name] = _family_fold_score(
+                        trial, val, halves, train, window, floor, rows
+                    )
+                except (ValueError, KeyError):
+                    continue
+            if not trials:
+                break
+            candidate = min(trials, key=lambda name: trials[name])
+            if trials[candidate] >= best - 1e-6:
+                break
+            best = trials[candidate]
+            kept = {key: frame for key, frame in kept.items() if key != candidate}
+        subsets[family] = sorted(kept)
+    return subsets
+
+
+def fit_family_subset_weights(
+    pred_map: dict[str, pd.DataFrame],
+    actual: pd.DataFrame,
+    subsets: dict[str, list[str]],
+) -> dict[str, dict[str, float]]:
+    """売り場ごとに、その売り場で残ったモデルだけで重みを当てる。"""
+    weights: dict[str, dict[str, float]] = {}
+    for family, rows in family_row_ids(pred_map).items():
+        names = [name for name in subsets.get(family, sorted(pred_map)) if name in pred_map]
+        if not names:
+            names = sorted(pred_map)
+        subset = {name: pred_map[name][pred_map[name][ROW_ID].isin(rows)] for name in names}
+        part = actual[actual[ROW_ID].isin(rows)]
+        if part.empty:
+            continue
+        weights[family] = fit_log_weights(subset, part)
+    return weights
+
+
+def _family_subsets_two_fold_score(
+    pred_map: dict[str, pd.DataFrame],
+    val: pd.DataFrame,
+    halves: tuple[set[Any], set[Any]],
+    train: pd.DataFrame,
+    window: int,
+    floor: float,
+    subsets: dict[str, list[str]],
+) -> float:
+    """売り場別の顔ぶれを、全行まとめて見ていない系列で採点する。"""
+    total = 0.0
+    for fit_ids, hold_ids in (halves, (halves[1], halves[0])):
+        fit_weights = fit_family_subset_weights(
+            _subset(pred_map, fit_ids), val[val[ROW_ID].isin(fit_ids)], subsets
+        )
+        held = blend_by_family(_subset(pred_map, hold_ids), fit_weights)
+        held = zero_out_dead_series(train, held, window) if window else held
+        held = snap_small_to_zero(held, floor)
+        total += score_against(held, val[val[ROW_ID].isin(hold_ids)])
+    return total / 2.0
+
+
 def _drop_models_that_do_not_earn_their_place(
     pred_map: dict[str, pd.DataFrame],
     val: pd.DataFrame,
@@ -467,8 +588,7 @@ def choose_blend(
         in_sample: dict[tuple[str, float, int], float] = {}
         for strategy, alpha in STRATEGY_PLANS:
             try:
-                plan = _fit_plan(strategy, val_preds, val, alpha)
-                raw = _apply_plan(plan, val_preds)
+                raw = _apply_plan(_fit_plan(strategy, val_preds, val, alpha), val_preds)
             except (ValueError, KeyError):
                 continue
             for window in windows:
@@ -529,9 +649,33 @@ def choose_blend(
                 calibrate = True
                 calibrate_shrink = shrink
 
+    family_subsets: dict[str, list[str]] | None = None
+    if honest_ok and holdout_score is not None and not calibrate:
+        try:
+            subsets = prune_by_family(val_preds, val, halves, train, window, floor)
+            value = _family_subsets_two_fold_score(
+                val_preds, val, halves, train, window, floor, subsets
+            )
+        except (ValueError, KeyError):
+            subsets, value = None, float("inf")
+        if subsets is not None and value < holdout_score - 1e-9:
+            holdout_score = value
+            family_subsets = subsets
+            strategy = "fitted_family_subsets"
+            used = sorted({name for names in subsets.values() for name in names})
+
     val_used = {name: val_preds[name] for name in used}
     test_used = {name: test_preds[name] for name in used}
-    plan = _fit_plan(strategy, val_used, val, alpha)
+    if family_subsets is not None:
+        by_family = fit_family_subset_weights(val_used, val, family_subsets)
+        plan: dict[str, Any] = {
+            "kind": "family",
+            "by_family": by_family,
+            "alpha": 1.0,
+            "models_by_family": family_subsets,
+        }
+    else:
+        plan = _fit_plan(strategy, val_used, val, alpha)
     val_raw = _apply_plan(plan, val_used)
     test_raw = _apply_plan(plan, test_used)
     val_blend = zero_out_dead_series(train, val_raw, window) if window else val_raw
@@ -556,6 +700,7 @@ def choose_blend(
         "weights": _mean_weights(plan, used),
         "weights_by_horizon": plan.get("by_horizon"),
         "weights_by_family": plan.get("by_family"),
+        "models_by_family": plan.get("models_by_family"),
         "models_used": used,
         "best_single": best_single,
         "score": score_against(val_blend, val),

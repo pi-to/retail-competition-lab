@@ -255,14 +255,14 @@ def test_choose_blend_reports_a_holdout_score_from_unseen_series():
 
     choice = blending.choose_blend(preds, preds, train, truth, truth)
 
-    assert choice["strategy"] == "fitted_family"
+    assert str(choice["strategy"]).startswith("fitted_family")
     assert choice["holdout_score"] is not None
     assert choice["holdout_score"] >= choice["score"]
     assert set(choice["candidates"]) >= {"fitted", "fitted_family"}
 
 
-def test_choose_blend_drops_a_model_that_only_adds_noise():
-    """当てはめには使えるが、見ていない系列では足を引っ張るモデルは外す。"""
+def test_choose_blend_gives_a_noise_model_no_real_weight():
+    """当てはめには使えるが、見ていない系列で足を引っ張るモデルには重みを渡さない。"""
     preds, truth = _family_panel_preds(noise=0.05)
     rng = np.random.default_rng(7)
     noise_only = preds["early"].copy()
@@ -272,8 +272,64 @@ def test_choose_blend_drops_a_model_that_only_adds_noise():
 
     choice = blending.choose_blend(preds, preds, train, truth, truth)
 
-    assert "noise" not in choice["models_used"]
     assert set(choice["models_used"]) >= {"early", "late"}
+    assert choice["weights"].get("noise", 0.0) < 0.05
+    for family, weights in choice["weights_by_family"].items():
+        assert weights.get("noise", 0.0) < 0.1, family
+
+
+def test_prune_by_family_keeps_a_model_only_where_it_helps():
+    """1つの売り場でだけ当たるモデルは、その売り場にだけ残す。"""
+    preds, truth = _family_panel_preds(noise=0.05)
+    rng = np.random.default_rng(3)
+    # C売り場だけ正解に近く、他はでたらめ
+    specialist = preds["early"].copy()
+    families = specialist["series_id"].str.split("::").str[-1]
+    specialist["pred"] = np.where(
+        families.to_numpy() == "C",
+        TOY_TRUTH["C"],
+        rng.uniform(1, 200, len(specialist)),
+    )
+    preds["c_specialist"] = specialist
+    train = pd.DataFrame({"date": pd.to_datetime(["2017-08-15"])})
+    halves = blending.series_halves(preds)
+
+    subsets = blending.prune_by_family(preds, truth, halves, train, window=0)
+
+    assert "c_specialist" in subsets["C"]
+    assert "c_specialist" not in subsets["A"]
+    assert "c_specialist" not in subsets["B"]
+
+
+def test_choose_blend_can_pick_a_different_lineup_per_family():
+    preds, truth = _family_panel_preds(noise=0.05)
+    rng = np.random.default_rng(11)
+    specialist = preds["late"].copy()
+    families = specialist["series_id"].str.split("::").str[-1]
+    specialist["pred"] = np.where(
+        families.to_numpy() == "B",
+        TOY_TRUTH["B"],
+        rng.uniform(1, 200, len(specialist)),
+    )
+    preds["b_specialist"] = specialist
+    train = pd.DataFrame({"date": pd.to_datetime(["2017-08-15"])})
+
+    choice = blending.choose_blend(preds, preds, train, truth, truth)
+
+    weights = choice["weights_by_family"]
+    assert weights["B"].get("b_specialist", 0.0) > 0.3
+    assert weights["A"].get("b_specialist", 0.0) < 0.05
+
+
+def test_fit_family_subset_weights_only_uses_the_models_left_in_that_family():
+    preds, truth = _family_panel_preds()
+    subsets = {"A": ["early"], "B": ["late"], "C": ["early", "late"]}
+
+    weights = blending.fit_family_subset_weights(preds, truth, subsets)
+
+    assert set(weights["A"]) <= {"early"}
+    assert set(weights["B"]) <= {"late"}
+    assert set(weights["C"]) <= {"early", "late"}
 
 
 def test_series_halves_keep_every_family_on_both_sides():

@@ -405,6 +405,10 @@ def run_experiment(
         "fitted_horizon": "予測日ごとに非負の重みを当てた。再帰の後半劣化を日別に補う。",
         "fitted_family": "商品ファミリーごとに非負の重みを当てた。系統ごとの当たり方の違いを残す。",
         "fitted_family_shrunk": "ファミリー別の重みを全体の重みへ少し寄せた。",
+        "fitted_family_subsets": (
+            "商品ファミリーごとに、混ぜる顔ぶれ自体を選んだ。"
+            "少数派の棚にだけ効くモデルを、その棚だけで残せる。"
+        ),
         "single": f"混ぜると悪化したので {best_single} 単体を採用した。",
     }
     zero_note = (
@@ -425,7 +429,10 @@ def run_experiment(
         {
             "id": "blend",
             "title": "提出する予測",
-            "note": f"{notes[strategy]}{shrink_note}{zero_note}{floor_note}{calibrate_note}",
+            "note": (
+                f"{notes.get(strategy, strategy)}{shrink_note}"
+                f"{zero_note}{floor_note}{calibrate_note}"
+            ),
             "rmsle": round(best_score, 5),
             "holdout_rmsle": (
                 round(float(holdout_score), 5) if holdout_score is not None else None
@@ -457,6 +464,7 @@ def run_experiment(
                 if chosen_family_weights is not None
                 else None
             ),
+            "models_by_family": choice.get("models_by_family"),
             "candidates": {k: round(v, 5) for k, v in per_strategy.items()},
             "wape": round(blend_business["wape"], 4),
             "bias": round(blend_business["bias"], 4),
@@ -619,6 +627,10 @@ def reblend_cached(prepared: Prepared, out_dir: Path, source_run: Path) -> JsonD
         "fitted_horizon": "予測日ごとに非負の重みを当てた。再帰の後半劣化を日別に補う。",
         "fitted_family": "商品ファミリーごとに非負の重みを当てた。系統ごとの当たり方の違いを残す。",
         "fitted_family_shrunk": "ファミリー別の重みを全体の重みへ少し寄せた。",
+        "fitted_family_subsets": (
+            "商品ファミリーごとに、混ぜる顔ぶれ自体を選んだ。"
+            "少数派の棚にだけ効くモデルを、その棚だけで残せる。"
+        ),
         "single": f"混ぜると悪化したので {best_single} 単体を採用した。",
     }
     zero_note = (
@@ -639,7 +651,10 @@ def reblend_cached(prepared: Prepared, out_dir: Path, source_run: Path) -> JsonD
         {
             "id": "blend",
             "title": "提出する予測",
-            "note": f"{notes[strategy]}{shrink_note}{zero_note}{floor_note}{calibrate_note}",
+            "note": (
+                f"{notes.get(strategy, strategy)}{shrink_note}"
+                f"{zero_note}{floor_note}{calibrate_note}"
+            ),
             "rmsle": round(best_score, 5),
             "holdout_rmsle": (
                 round(float(holdout_score), 5) if holdout_score is not None else None
@@ -671,6 +686,7 @@ def reblend_cached(prepared: Prepared, out_dir: Path, source_run: Path) -> JsonD
                 if chosen_family_weights is not None
                 else None
             ),
+            "models_by_family": choice.get("models_by_family"),
             "candidates": {k: round(v, 5) for k, v in per_strategy.items()},
             "wape": round(blend_business["wape"], 4),
             "bias": round(blend_business["bias"], 4),
