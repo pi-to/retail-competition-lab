@@ -270,7 +270,7 @@ export const STORE_SALES_EXPERIMENTS: ExperimentInsight[] = [
   {
     id: "intermittent-recursive-v1",
     tag: "superseded",
-    title: "「最後に売れてから何日か」を教える",
+    title: "最後に売れてから何日かを教える",
     plain: "売れない日の続き方と、直近の売れ方の変化をモデルに渡した。",
     localRmsle: 0.37572,
     holdoutRmsle: 0.37967,
@@ -315,7 +315,7 @@ export const STORE_SALES_EXPERIMENTS: ExperimentInsight[] = [
   {
     id: "hurdle-recursive-v1",
     tag: "champion / latest",
-    title: "「売れるか」と「いくら売れるか」を分ける",
+    title: "売れるかと、いくら売れるかを分ける",
     plain: "その日に売れるかどうかと、売れたときの量を別々に学ばせた。",
     localRmsle: 0.37359,
     holdoutRmsle: 0.37825,
