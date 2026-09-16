@@ -27,6 +27,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   STORE_SALES_EXPERIMENTS,
   SUBMIT_LABEL,
+  comparableScore,
   experimentsByScore,
   submitRecommendation,
   type ExperimentInsight,
@@ -38,6 +39,7 @@ type Run = {
   label: string;
   created_at: string;
   local_rmsle: number;
+  holdout_rmsle?: number | null;
   leaderboard: number | null;
   method_version: string;
 };
@@ -70,11 +72,11 @@ export function ExperimentHistory({
   const insight = ranked.find((item) => item.id === selected) ?? rec.experiment;
   const visible = showFailed ? ranked : ranked.filter((item) => item.outcome !== "不採用");
   const trail = [...improved]
-    .sort((a, b) => b.localRmsle - a.localRmsle)
+    .sort((a, b) => comparableScore(b) - comparableScore(a))
     .map((item, index) => ({
       step: index + 1,
       name: item.title,
-      score: item.localRmsle,
+      score: comparableScore(item),
     }));
 
   async function refresh() {
@@ -154,7 +156,8 @@ export function ExperimentHistory({
           <CardHeader>
             <CardTitle className="text-base">試したこと</CardTitle>
             <CardDescription>
-              点数が良い順。行を押すと、なぜそうなったかが下に出ます。
+              点数が良い順。点数は、混ぜ方を決めるのに使っていない店舗で採点したものです。
+              行を押すと、なぜそうなったかが下に出ます。
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
@@ -185,7 +188,7 @@ export function ExperimentHistory({
                         )}
                       </TableCell>
                       <TableCell className="text-right font-mono font-medium">
-                        {item.localRmsle.toFixed(4)}
+                        {comparableScore(item).toFixed(4)}
                         {item.leaderboard != null ? (
                           <span className="block text-xs font-normal text-muted-foreground">
                             本番 {item.leaderboard.toFixed(4)}
@@ -262,7 +265,7 @@ export function ExperimentHistory({
                             )}
                           </TableCell>
                           <TableCell className="text-right font-mono">
-                            {run.local_rmsle.toFixed(4)}
+                            {(run.holdout_rmsle ?? run.local_rmsle).toFixed(4)}
                             {run.leaderboard !== null ? (
                               <span className="block text-xs text-muted-foreground">
                                 本番 {run.leaderboard.toFixed(4)}
@@ -341,7 +344,10 @@ function InsightDetail({ insight }: { insight: ExperimentInsight }) {
           </Badge>
         </CardTitle>
         <CardDescription>
-          模擬試験 {insight.localRmsle.toFixed(5)}
+          模擬試験 {comparableScore(insight).toFixed(5)}
+          {insight.holdoutRmsle != null
+            ? `（当てはめた行なら ${insight.localRmsle.toFixed(5)}）`
+            : ""}
           {insight.leaderboard ? ` / 本番 ${insight.leaderboard.toFixed(5)}` : " / 本番は未提出"}
         </CardDescription>
       </CardHeader>

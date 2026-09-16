@@ -50,10 +50,10 @@ const storeSales: CompetitionContent = {
       { label: "先週と同じと考える", score: 0.617, kind: "other" },
       { label: "素直な機械学習1本", score: 0.4365, kind: "other" },
       { label: "最初に提出した版", score: 0.39515, kind: "other" },
-      { label: "いまの提出候補", score: 0.374, kind: "ours" },
+      { label: "いまの提出候補", score: 0.38027, kind: "ours" },
     ],
     scoreLead:
-      "低いほど良い点数。0.62は「だいたい1.9倍ずれる」、0.37は「だいたい1.45倍」。上位帯は差が小さいので、効く工夫を1つずつ積む。",
+      "低いほど良い点数。0.62は「だいたい1.9倍ずれる」、0.38は「だいたい1.46倍」。上位帯は差が小さいので、効く工夫を1つずつ積む。",
   },
   pillars: [
     {
@@ -188,9 +188,9 @@ const storeSales: CompetitionContent = {
     },
   ],
   nextSteps: [
+    "残った5モデルの中身を改善する（LINGERIE 0.623、GROCERY II 0.571）。",
     "GROCERY II のレベル変化（検証窓で売上増）を、過学習しない特徴で捉える。",
-    "予測12〜16日目の劣化を、過学習しない範囲で日別に補う。",
-    "公開LBで robust-min-family-v1（0.37400）が再現するか確認する。",
+    "公開LBで honest-subset-blend-v1（隠して採点 0.38027）が再現するか確認する。",
   ],
   demoNote: "デモは公式と同じ列名の縮小データ（4店舗 × 6ファミリー）です。",
 };

@@ -11,6 +11,8 @@ export type ExperimentInsight = {
   /** 専門語なしの一言。表に出すのはこれだけ。 */
   plain: string;
   localRmsle: number;
+  /** 重みを当てはめていない系列で採点した点数。Run同士の比較はこれで行う。 */
+  holdoutRmsle?: number;
   leaderboard?: number;
   outcome: "採用" | "不採用" | "改善";
   submitAction: SubmitAction;
@@ -222,17 +224,48 @@ export const STORE_SALES_EXPERIMENTS: ExperimentInsight[] = [
   },
   {
     id: "robust-min-family-v1",
-    tag: "champion / latest",
+    tag: "superseded",
     title: "過大予測を行ごと最小で抑える",
     plain: "多めに出がちな売り場は、候補のうち一番控えめな数字を採った。",
     localRmsle: 0.374,
+    holdoutRmsle: 0.38157,
     outcome: "改善",
-    submitAction: "submit_now",
+    submitAction: "superseded",
     runId: "20260916-121346-robust-min-family-v1-8f95f3",
     tried: "direct・再帰・再帰(地震除外)・TimesFMの予測を行ごとに最小値でまとめた robust_min を候補に足し、ファミリー別混合し直した。再学習なし。",
     result: "混合RMSLE 0.37400（前Champion 0.37441）。GROCERY II の系統で robust_min が正の重みを持つ。提出CSVはヘッダ+28,512行。公開LBは未記録。",
     why: "GROCERY II は検証窓で売上が上がり、各モデルが上に外れやすい。行ごと最小は一番控えめな候補を残し、過大予測の罰を減らす。",
-    learned: "後段のまとめ方もモデル候補として検証に載せる。単体 0.47 でも混ぜれば効く。",
+    learned: "後段のまとめ方もモデル候補として検証に載せる。単体 0.47 でも混ぜれば効く。ただし後述のとおり、この 0.374 は重みを当てはめた行で測った点数で、甘く出ていた。",
+  },
+  {
+    id: "honest-selection-v1",
+    tag: "method-fix",
+    title: "重みを当てはめた行で選ぶのをやめる",
+    plain: "採点の仕方が甘かったので、重みを決めていない店舗で採点するように直した。",
+    localRmsle: 0.37559,
+    holdoutRmsle: 0.38061,
+    outcome: "改善",
+    submitAction: "superseded",
+    runId: "20260916-124435-honest-family-blend-v1-5bbaa1",
+    tried: "ファミリーごとに系列（店舗）を2つに割り、片方で重みを当てはめ、もう片方で採点。両方向の平均で混ぜ方・ゼロ窓・縮約率を選ぶようにした。過去Runにも同じ物差しを後入れ（rescore）。",
+    result: "この物差しで測ると、直前Championの 0.374 は 0.38157、その前の版は 0.38061 で、実は悪化していた。縮約率0.85のファミリー別混合が 0.38061 で最良。",
+    why: "ファミリー別の重みは、重みを当てはめたその行では必ず有利に見える。似たモデルを並べるほど当てはめ過ぎる。見ていない店舗で採点すると、その下駄が外れる。",
+    learned: "改善かどうかは、当てはめに使っていないデータで測る。Champion昇格の判定もこの点数に切り替えた。",
+  },
+  {
+    id: "honest-subset-blend-v1",
+    tag: "champion / latest",
+    title: "足を引っ張るモデルを外す",
+    plain: "混ぜる顔ぶれを見直し、見ていない店舗で悪化させる5モデルを外した。",
+    localRmsle: 0.37581,
+    holdoutRmsle: 0.38027,
+    outcome: "改善",
+    submitAction: "submit_now",
+    runId: "20260916-125014-honest-subset-blend-v1-301513",
+    tried: "10候補から1つずつ外し、見ていない店舗の点数が良くなる限り落とした。Tweedie再帰、一括LightGBM、季節ナイーブ、地震除外再帰、TimesFMが落ちた。",
+    result: "残ったのは Chronos-2・予測距離別・再帰・短い履歴再帰・行ごと最小の5つで 0.38027（前 0.38061）。提出CSVはヘッダ+28,512行。公開LBは未記録。",
+    why: "似た予測を並べると、重みの当てはめがその重複に反応してしまう。数を絞ると重みが安定し、未知の系列でも崩れにくい。",
+    learned: "モデルは足すだけでなく、外す判断も検証に任せる。次は残った5つの中身（LINGERIE 0.623、GROCERY II 0.571）を改善する。",
   },
   {
     id: "foundation-blend-v1",
@@ -257,12 +290,17 @@ export type SubmitRecommendation = {
   doNotSubmit: string;
 };
 
+/** 比較に使う点数。隠して採点した点数があればそれを優先する。 */
+export function comparableScore(item: ExperimentInsight): number {
+  return item.holdoutRmsle ?? item.localRmsle;
+}
+
 export function pickSubmitCandidate(
   experiments: ExperimentInsight[] = STORE_SALES_EXPERIMENTS
 ): ExperimentInsight {
   const marked = experiments.find((item) => item.submitAction === "submit_now");
   if (marked) return marked;
-  return [...experiments].sort((a, b) => a.localRmsle - b.localRmsle)[0];
+  return [...experiments].sort((a, b) => comparableScore(a) - comparableScore(b))[0];
 }
 
 export function submitRecommendation(
@@ -270,11 +308,12 @@ export function submitRecommendation(
 ): SubmitRecommendation {
   const experiment = pickSubmitCandidate(experiments);
   const submitted = experiments.find((item) => item.submitAction === "already_submitted");
+  const score = comparableScore(experiment);
   return {
     experiment,
-    headline: `提出するのは「${experiment.title}」（ローカル ${experiment.localRmsle.toFixed(5)}）`,
+    headline: `提出するのは「${experiment.title}」（模擬試験 ${score.toFixed(5)}）`,
     whyThis:
-      "ChampionタグのRun。同じ末尾16日検証でいちばん低く、提出CSV（ヘッダ+28,512行）もこの成果物。公開LBは未記録なので、次にKaggleへ出すならこれ1本。",
+      "重みを決めていない店舗で採点した点数がいちばん低いRun。提出CSV（ヘッダ+28,512行）もこの成果物です。公開LBは未記録なので、次にKaggleへ出すならこれ1本。",
     doNotSubmit: submitted
       ? `公開LB ${submitted.leaderboard?.toFixed(5)} の「${submitted.title}」は提出済みの古い混合（ローカル ${submitted.localRmsle.toFixed(5)}）。同じCSVを出し直さない。灰色の「出さない」は単体・失敗実験。`
       : "失敗実験と単体スコアは出さない。混ぜたChampionだけ出す。",
@@ -284,5 +323,5 @@ export function submitRecommendation(
 export function experimentsByScore(
   experiments: ExperimentInsight[] = STORE_SALES_EXPERIMENTS
 ): ExperimentInsight[] {
-  return [...experiments].sort((a, b) => a.localRmsle - b.localRmsle);
+  return [...experiments].sort((a, b) => comparableScore(a) - comparableScore(b));
 }
