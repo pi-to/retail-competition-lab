@@ -26,9 +26,11 @@ Kaggleの「Store Sales - Time Series Forecasting」に、Amazon Chronos-2、Goo
 | 逆RMSLEで単純混合 | 0.42822 | 不採用 |
 | ゼロ系列を21日ルールで補正 | 0.41187 | 不採用 |
 | Chronos-2 74% + LightGBM 26% | 0.40002 | 旧Champion |
-| 再帰LightGBM 58% + Chronos-2 37% + 一括LightGBM 5% | **0.39020** | 新Champion |
+| 再帰LightGBM 58% + Chronos-2 37% + 一括LightGBM 5% | **0.39020** | 旧Champion |
+| 再帰320本 53% + Chronos-2 33% + 予測距離別 13% | **0.38893** | 新Champion |
 
 公開LBは **0.39515** でした。ローカルとの差が0.005なので、以後の改善判断にこの検証を使えると考えています。
+現Champion 0.38893 はまだ提出前です。
 
 ## うまくいった: Chronos-2に未来共変量を渡す
 
