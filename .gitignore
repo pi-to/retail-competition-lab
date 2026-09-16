@@ -28,8 +28,12 @@ kaggle.json
 __pycache__/
 *.pyc
 .venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
 outputs/
-data/kaggle/
+# 公式データは各自 Kaggle から取得する（デモデータは追跡する）
+data/*/kaggle/
 
 # misc
 .DS_Store
