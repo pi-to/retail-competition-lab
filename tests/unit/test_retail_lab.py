@@ -349,6 +349,14 @@ def test_cross_fold_rule_scores_judges_both_rules_on_rows_it_did_not_select_on()
     noise_only = preds["early"].copy()
     noise_only["pred"] = rng.uniform(1, 120, len(noise_only))
     preds["noise"] = noise_only
+    specialist = preds["late"].copy()
+    families = specialist["series_id"].str.split("::").str[-1]
+    specialist["pred"] = np.where(
+        families.to_numpy() == "C",
+        TOY_TRUTH["C"],
+        rng.uniform(1, 200, len(specialist)),
+    )
+    preds["c_specialist"] = specialist
     train = pd.DataFrame({"date": pd.to_datetime(["2017-08-15"])})
     halves = blending.series_halves(preds)
 
@@ -356,6 +364,7 @@ def test_cross_fold_rule_scores_judges_both_rules_on_rows_it_did_not_select_on()
 
     assert set(scores) == {"global", "per_family"}
     assert all(value > 0 for value in scores.values())
+    assert scores["per_family"] < scores["global"]
 
 
 def test_fit_family_subset_weights_only_uses_the_models_left_in_that_family():

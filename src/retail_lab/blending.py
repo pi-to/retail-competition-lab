@@ -631,40 +631,39 @@ def cross_fold_rule_scores(
 
     いつもの二分割は「片側で重みを当て、もう片側で採点」する。しかし顔ぶれを選ぶ
     ときに両方向の平均を見ていると、採点する行を選択にも使ってしまう。ここでは
-    片側だけで顔ぶれを決め、反対側で採点する（両向きの平均）。全体で1つの顔ぶれと、
-    売り場ごとの顔ぶれを、同じ条件で比べるための診断。
+    片側の系列だけで顔ぶれを決め、その片側で重みも当て、一度も見ていない反対側で
+    採点する（両向きの平均）。全体で1つの顔ぶれと、売り場ごとの顔ぶれを同じ条件で比べる。
     """
     left, right = halves
     totals = {"global": 0.0, "per_family": 0.0}
+    n_dir = 0
     for select, evaluate in ((left, right), (right, left)):
-        select_halves = (select, evaluate)
+        select_map = _subset(pred_map, select)
+        select_val = val[val[ROW_ID].isin(select)]
+        inner = series_halves(select_map)
+        if not inner[0] or not inner[1]:
+            continue
         chosen, _ = _drop_models_that_do_not_earn_their_place(
-            pred_map,
-            val,
-            select_halves,
-            "fitted_family",
-            alpha,
-            train,
-            window,
-            single_direction=True,
+            select_map, select_val, inner, "fitted_family", alpha, train, window
         )
-        subsets = prune_by_family(
-            pred_map, val, select_halves, train, window, floor, single_direction=True
-        )
-        fit_actual = val[val[ROW_ID].isin(evaluate)]
-        hold_actual = val[val[ROW_ID].isin(select)]
+        subsets = prune_by_family(select_map, select_val, inner, train, window, floor)
+        eval_actual = val[val[ROW_ID].isin(evaluate)]
 
-        kept = {name: pred_map[name] for name in chosen}
-        plan = _fit_plan("fitted_family", _subset(kept, evaluate), fit_actual, alpha)
-        held = _apply_plan(plan, _subset(kept, select))
+        kept_select = {name: select_map[name] for name in chosen}
+        plan = _fit_plan("fitted_family", kept_select, select_val, alpha)
+        kept_eval = {name: pred_map[name][pred_map[name][ROW_ID].isin(evaluate)] for name in chosen}
+        held = _apply_plan(plan, kept_eval)
         held = zero_out_dead_series(train, held, window) if window else held
-        totals["global"] += score_against(snap_small_to_zero(held, floor), hold_actual)
+        totals["global"] += score_against(snap_small_to_zero(held, floor), eval_actual)
 
-        weights = fit_family_subset_weights(_subset(pred_map, evaluate), fit_actual, subsets)
-        held = blend_by_family(_subset(pred_map, select), weights)
+        weights = fit_family_subset_weights(select_map, select_val, subsets)
+        held = blend_by_family(_subset(pred_map, evaluate), weights)
         held = zero_out_dead_series(train, held, window) if window else held
-        totals["per_family"] += score_against(snap_small_to_zero(held, floor), hold_actual)
-    return {name: value / 2.0 for name, value in totals.items()}
+        totals["per_family"] += score_against(snap_small_to_zero(held, floor), eval_actual)
+        n_dir += 1
+    if n_dir == 0:
+        raise ValueError("顔ぶれ診断の分割が作れません")
+    return {name: value / n_dir for name, value in totals.items()}
 
 
 def _drop_models_that_do_not_earn_their_place(

@@ -90,6 +90,7 @@ const SHORT: Record<string, string> = {
   "promo-context-v1": "全店の特売の強さ",
   "family-lineups-v1": "売り場ごとに顔ぶれを変える",
   "peer-revive-v1": "地域モデルを戻す",
+  "specialist-family-mix-v1": "困っている棚へ後付け",
   "foundation-blend-v1": "最初の提出",
 };
 
