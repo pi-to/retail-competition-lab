@@ -120,6 +120,7 @@ export function ExperimentHistory({
   const [history, setHistory] = useState(initial);
   const [pending, setPending] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const insight = ranked.find((item) => item.id === selected) ?? rec.experiment;
   const championId = history.tags.champion;
 
   const milestones = ranked.filter(isMilestone);
