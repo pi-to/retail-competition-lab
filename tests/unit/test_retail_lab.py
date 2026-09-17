@@ -370,7 +370,6 @@ def test_halves_score_is_the_baseline_for_postprocess_on_a_finished_blend():
     assert holdout >= baseline - 1e-12
 
 
-
 def test_cross_fold_rule_scores_judges_both_rules_on_rows_it_did_not_select_on():
     """顔ぶれの選び方そのものを、選択に使っていない行で比べる。"""
     preds, truth = _family_panel_preds(noise=0.05)
@@ -825,6 +824,66 @@ def test_tsb_forecast_is_between_zero_and_the_sale_size():
     assert (store_one > 0).all()
     assert (store_one < 5.0).all()
     assert {str(item["feature"]) for item in ranked} >= {"tsb_probability_x_size"}
+
+
+def _two_year_panel(horizon: int = 16) -> pd.DataFrame:
+    """去年の同じ時期にだけ山がある棚。暦の山を見に行く版のテスト用。"""
+    dates = pd.date_range("2016-01-01", periods=600 + horizon)
+    last_day = dates[599]
+    rows = []
+    row_id = 0
+    for store in (1, 2):
+        for date in dates:
+            spike = date.month == 8 and 16 <= date.day <= 31
+            rows.append(
+                {
+                    "row_id": row_id,
+                    "series_id": f"{store}::A",
+                    "date": date,
+                    "target": 100.0 if spike else 10.0,
+                    "family": "A",
+                }
+            )
+            row_id += 1
+    panel = pd.DataFrame(rows)
+    panel.loc[panel["date"] > last_day, "target"] = np.nan
+    return panel
+
+
+def test_last_year_forecast_finds_a_calendar_spike_the_recent_history_cannot_see():
+    """8月後半の山は直近28日には出てこない。去年の同じ日なら知っている。"""
+    from retail_lab.competitions.store_sales.statistical import last_year_fit_predict
+
+    panel = _two_year_panel()
+    split = split_panel(panel, 16)
+    changed = split.val.copy()
+    changed["target"] = 999999.0
+
+    first, ranked = last_year_fit_predict(split.train, split.val)
+    second, _ = last_year_fit_predict(split.train, changed)
+
+    assert first.sort_values("row_id")["pred"].tolist() == pytest.approx(
+        second.sort_values("row_id")["pred"].tolist()
+    )
+    assert len(first) == len(split.val)
+    assert set(first.columns) == {"row_id", "date", "series_id", "pred"}
+    spike = first[pd.to_datetime(first["date"]).dt.day >= 17]
+    assert spike["pred"].min() > 50.0
+    assert {str(item["feature"]) for item in ranked} >= {"same_day_last_year"}
+
+
+def test_last_year_forecast_falls_back_to_the_recent_level_without_a_year_of_history():
+    from retail_lab.competitions.store_sales.statistical import last_year_fit_predict
+
+    panel = _sparse_panel()
+    split = split_panel(panel, 16)
+
+    out, _ = last_year_fit_predict(split.train, split.val)
+
+    assert len(out) == len(split.val)
+    assert (out["pred"] >= 0).all()
+    assert out["pred"].notna().all()
+    assert out["pred"].max() > 0
 
 
 def test_dow_index_forecast_uses_only_history_and_covers_every_row():

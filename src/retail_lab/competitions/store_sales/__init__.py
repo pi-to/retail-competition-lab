@@ -286,6 +286,16 @@ def prepare(root: Path, source: str) -> Prepared:
                 org="custom",
             ),
             CandidateModel(
+                id="last_year_calendar",
+                title="去年の同じ日（水準を合わせ直す）",
+                note=(
+                    "提出期間は8月後半で、新学期の文具のように暦でしか説明できない山がある。"
+                    "直近の履歴を見るモデルはその山を知らないが、去年の同じ日なら知っている。"
+                ),
+                predict=statistical.last_year_fit_predict,
+                org="custom",
+            ),
+            CandidateModel(
                 id="dow_index_level",
                 title="直近の水準 × 売り場の曜日のクセ",
                 note=(

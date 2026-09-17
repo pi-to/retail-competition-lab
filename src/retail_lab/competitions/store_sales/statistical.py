@@ -73,6 +73,66 @@ def tsb_fit_predict(
     return out[OUTPUT], ranked
 
 
+def last_year_fit_predict(
+    train: pd.DataFrame,
+    future: pd.DataFrame,
+    *,
+    level_window: int = LEVEL_WINDOW,
+    smooth_days: int = 3,
+) -> tuple[pd.DataFrame, list[dict[str, float | str]]]:
+    """1年前の同じ日付を、いまの水準に合わせ直して出す。
+
+    提出期間は8月後半で、新学期の文具のように暦でしか説明できない山がある。
+    直近の履歴だけを見るモデルはこの山を知らないが、去年の同じ日なら知っている。
+    去年からの伸び縮みは、両方の年の同じ長さの直近平均の比で合わせる。
+
+    `future[TARGET]` は読まない。去年の実績と学習期間の水準だけを使う。
+    """
+    history = train[[SERIES_ID, DATE, TARGET]].copy()
+    history[TARGET] = history[TARGET].astype(float).clip(lower=0)
+    last_day = history[DATE].max()
+
+    def window_mean(end: pd.Timestamp) -> pd.Series:
+        part = history[
+            (history[DATE] > end - pd.Timedelta(days=level_window)) & (history[DATE] <= end)
+        ]
+        return part.groupby(SERIES_ID)[TARGET].mean()
+
+    now_level = window_mean(last_day)
+    then_level = window_mean(last_day - pd.Timedelta(days=365))
+    ratio = ((now_level + 1.0) / (then_level.reindex(now_level.index) + 1.0)).clip(0.25, 4.0)
+
+    daily = history.set_index([SERIES_ID, DATE])[TARGET]
+    out = future[[ROW_ID, DATE, SERIES_ID]].copy()
+    offsets = range(-smooth_days, smooth_days + 1)
+    stacked = []
+    for offset in offsets:
+        keys = pd.MultiIndex.from_arrays(
+            [
+                out[SERIES_ID].astype(str).to_numpy(),
+                (pd.to_datetime(out[DATE]) - pd.Timedelta(days=365 - offset)).to_numpy(),
+            ]
+        )
+        stacked.append(daily.reindex(keys).to_numpy(dtype=float))
+    # 去年の同じ日が休みや欠品だと跳ねるので、前後数日の中央値で均す。
+    # 去年の履歴が丸ごと無い行は中央値を取れない。その行は下で直近の水準へ落とす。
+    window = np.column_stack(stacked)
+    last_year = np.full(len(window), np.nan)
+    known = ~np.isnan(window).all(axis=1)
+    if known.any():
+        last_year[known] = np.nanmedian(window[known], axis=1)
+    scale = out[SERIES_ID].astype(str).map(ratio).to_numpy(dtype=float)
+    fallback = out[SERIES_ID].astype(str).map(now_level).to_numpy(dtype=float)
+    values = np.where(np.isfinite(last_year), last_year * np.nan_to_num(scale, nan=1.0), fallback)
+    out["pred"] = np.clip(np.nan_to_num(values, nan=0.0), 0.0, None)
+    ranked: list[dict[str, float | str]] = [
+        {"feature": "same_day_last_year", "gain": 1.0},
+        {"feature": f"level_ratio_{level_window}", "gain": 0.6},
+        {"feature": f"median_window_{smooth_days}", "gain": 0.3},
+    ]
+    return out[OUTPUT], ranked
+
+
 def _family_dow_index(train: pd.DataFrame, days: int) -> pd.DataFrame:
     """売り場ごとに「月曜は平均の何倍か」を全店まとめて出す。"""
     cutoff = train[DATE].max() - pd.Timedelta(days=days)
