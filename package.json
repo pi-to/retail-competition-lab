@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start --hostname 127.0.0.1 --port 43123",
     "lint": "eslint",
+    "build:report": "node scripts/build-static-report.mjs",
     "forecast": "uv run retail-lab run --source demo",
     "fetch": "uv run retail-lab fetch"
   },
