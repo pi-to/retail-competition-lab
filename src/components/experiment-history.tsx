@@ -238,7 +238,7 @@ export function ExperimentHistory({
                 >
                   <XAxis type="number" domain={[0.35, 0.65]} hide />
                   <YAxis type="category" dataKey="name" width={108} tick={{ fontSize: 10 }} />
-                  <Tooltip formatter={(value) => Number(value).toFixed(4)} />
+                  <Tooltip formatter={(value) => Number(value).toFixed(5)} />
                   <Bar
                     dataKey="score"
                     radius={[0, 3, 3, 0]}
@@ -310,10 +310,10 @@ export function ExperimentHistory({
                         )}
                       </TableCell>
                       <TableCell className="text-right font-mono text-sm font-medium">
-                        {comparableScore(item).toFixed(4)}
+                        {comparableScore(item).toFixed(5)}
                         {item.leaderboard != null ? (
                           <span className="block text-[10px] font-normal text-orange-600">
-                            本番 {item.leaderboard.toFixed(4)}
+                            本番 {item.leaderboard.toFixed(5)}
                           </span>
                         ) : null}
                       </TableCell>
