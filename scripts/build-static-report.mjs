@@ -6,7 +6,7 @@
  * /report だけを持つ小さなアプリとして書き出す。元のリポジトリは触らない。
  */
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -53,6 +53,7 @@ try {
       "const nextConfig: NextConfig = {",
       '  output: "export",',
       `  basePath: ${JSON.stringify(basePath)},`,
+      "  trailingSlash: true,",
       "  images: { unoptimized: true },",
       "};",
       "",
@@ -71,6 +72,11 @@ try {
   rmSync(outDir, { recursive: true, force: true });
   cpSync(path.join(work, "out"), outDir, { recursive: true });
   writeFileSync(path.join(outDir, ".nojekyll"), "", "utf8");
+  // GitHub Pages と単純な静的サーバは /report をディレクトリとして開く。
+  mkdirSync(path.join(outDir, "report"), { recursive: true });
+  if (existsSync(path.join(outDir, "report.html")) && !existsSync(path.join(outDir, "report", "index.html"))) {
+    copyFileSync(path.join(outDir, "report.html"), path.join(outDir, "report", "index.html"));
+  }
   console.log(`静的な読み物版を書き出しました: ${outDir}`);
 } finally {
   rmSync(work, { recursive: true, force: true });
