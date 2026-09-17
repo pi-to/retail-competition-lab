@@ -342,6 +342,23 @@ def test_mix_specialists_by_family_only_mixes_where_it_helps():
     assert holdout > 0
 
 
+def test_tune_family_floors_snaps_only_the_sparse_family():
+    """0が正解の売り場だけ小さい予測を切る。当たっている売り場は触らない。"""
+    preds, truth = _family_panel_preds()
+    blend = preds["early"].copy()
+    sparse = blend["series_id"].astype(str).str.endswith("::C")
+    blend.loc[sparse, "pred"] = 0.2
+    truth.loc[truth["series_id"].astype(str).str.endswith("::C"), "target"] = 0.0
+    halves = blending.series_halves({"blend": blend})
+
+    tuned, recipes, holdout = blending.tune_family_floors(blend, truth, halves)
+
+    assert recipes["C"] >= 0.2
+    assert recipes["A"] == 0.0
+    assert tuned.loc[sparse, "pred"].to_numpy() == pytest.approx(0.0)
+    assert holdout < blending.score_against(blend, truth)
+
+
 def test_cross_fold_rule_scores_judges_both_rules_on_rows_it_did_not_select_on():
     """顔ぶれの選び方そのものを、選択に使っていない行で比べる。"""
     preds, truth = _family_panel_preds(noise=0.05)

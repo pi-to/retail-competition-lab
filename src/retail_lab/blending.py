@@ -332,6 +332,63 @@ def mix_specialists_by_family(
     return _apply_family_mix(blend, specialists, recipes), recipes, holdout
 
 
+def _family_floor_recipes(
+    blend: pd.DataFrame,
+    val: pd.DataFrame,
+    row_ids: set[Any],
+    floors: tuple[float, ...],
+) -> dict[str, float]:
+    """row_ids の点数だけで、売り場ごとの小さい予測の打ち切りを決める。"""
+    families = pd.Series(_family_of(blend).to_numpy(), index=blend[ROW_ID].to_numpy())
+    recipes: dict[str, float] = {}
+    for family in sorted({str(item) for item in families.unique()}):
+        rows = set(blend.loc[families.to_numpy() == family, ROW_ID].to_numpy()) & row_ids
+        if not rows:
+            continue
+        base = blend[blend[ROW_ID].isin(rows)]
+        best_floor = 0.0
+        best = float("inf")
+        for floor in floors:
+            score = score_against(snap_small_to_zero(base, floor), val)
+            if score < best - 1e-12:
+                best = score
+                best_floor = float(floor)
+        recipes[family] = best_floor
+    return recipes
+
+
+def _apply_family_floors(frame: pd.DataFrame, recipes: dict[str, float]) -> pd.DataFrame:
+    out = frame.copy()
+    fam = pd.Series(_family_of(out).to_numpy(), index=out[ROW_ID].to_numpy())
+    pred = out[PRED].to_numpy(dtype=float).copy()
+    for family, floor in recipes.items():
+        if floor <= 0:
+            continue
+        mask = fam.to_numpy() == family
+        pred[mask & (pred < floor)] = 0.0
+    out[PRED] = pred
+    return out
+
+
+def tune_family_floors(
+    blend: pd.DataFrame,
+    val: pd.DataFrame,
+    halves: tuple[set[Any], set[Any]],
+    floors: tuple[float, ...] = (0.0, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0),
+) -> tuple[pd.DataFrame, dict[str, float], float]:
+    """売れない日が多い売り場だけ、小さい予測を0にする。打ち切り幅は見ていない店で選ぶ。"""
+    hold_total = 0.0
+    n_dir = 0
+    for fit_ids, hold_ids in (halves, (halves[1], halves[0])):
+        recipes = _family_floor_recipes(blend, val, fit_ids, floors)
+        held = _apply_family_floors(blend[blend[ROW_ID].isin(hold_ids)], recipes)
+        hold_total += score_against(held, val)
+        n_dir += 1
+    recipes = _family_floor_recipes(blend, val, set(blend[ROW_ID].to_numpy()), floors)
+    holdout = hold_total / n_dir if n_dir else score_against(blend, val)
+    return _apply_family_floors(blend, recipes), recipes, holdout
+
+
 def snap_small_to_zero(pred: pd.DataFrame, threshold: float) -> pd.DataFrame:
     """小さすぎる予測を0にする。売れない日が多い系統では、迷ったら0の方が罰が軽い。
 
