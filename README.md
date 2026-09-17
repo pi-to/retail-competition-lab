@@ -109,6 +109,23 @@ GitHub Actions も同じ内容を回します（`.github/workflows/ci.yml`）。
 `.github/workflows/ai-review.yml` が未来漏洩・提出物・権限を観点にレビューを書きます。
 デプロイ（CD）は意図的に置いていません。
 
+## GitHub 上で画面を公開できるか
+
+**コードと CI はすでに GitHub 上**です。一方、いま動かしている `http://127.0.0.1:43123` そのものは
+GitHub Pages には載せられません。理由は次のとおりです。
+
+| 置き場 | できること | このアプリ |
+| --- | --- | --- |
+| GitHub リポジトリ | コード・実験メモ・Actions | すでにホストしている |
+| GitHub Pages | 静的な HTML/CSS/JS だけ | 不可。画面が Next.js の API 経由で Python 実験と `outputs/` を読む |
+| GitHub Actions | テストとレビュー | 常時サーバではない。予測の実行基盤にもしない |
+| GitHub Codespaces | ブラウザから同じ `npm run dev` | 可。GitHub 上の開発環境でローカルサーバ相当を起動する |
+| Vercel など | 画面の常時公開 | 画面だけなら可。公式データ・予測・提出は別プロセスのまま |
+
+GitHub Pages 向けに静的書き出しすると、概要と実験年表の読み物にはなりますが、
+「予測を実行」「Runのロールバック」「Kaggle提出」は動きません。常時デモが必要なら
+画面を Vercel に載せ、実験本体は手元または Codespaces で回す形になります。
+
 ## ファイル構成
 
 ```

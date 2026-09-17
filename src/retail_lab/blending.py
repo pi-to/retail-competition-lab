@@ -246,6 +246,90 @@ def _subset(pred_map: dict[str, pd.DataFrame], row_ids: set[Any]) -> dict[str, p
     return {name: frame[frame[ROW_ID].isin(row_ids)] for name, frame in pred_map.items()}
 
 
+def _log_mix(base: pd.DataFrame, other: pd.DataFrame, share: float) -> pd.DataFrame:
+    """log1p 空間で share だけ other を混ぜる。0 なら base のまま。"""
+    if share <= 0:
+        return base.copy()
+    out = base.copy()
+    left = np.log1p(base.set_index(ROW_ID)[PRED].clip(lower=0))
+    right = np.log1p(other.set_index(ROW_ID)[PRED].clip(lower=0)).reindex(left.index)
+    mixed = (1.0 - share) * left + share * right.fillna(left)
+    out[PRED] = np.clip(np.expm1(mixed.to_numpy()), 0, None)
+    return out
+
+
+def _family_mix_recipes(
+    blend: pd.DataFrame,
+    specialists: dict[str, pd.DataFrame],
+    val: pd.DataFrame,
+    row_ids: set[Any],
+    shares: tuple[float, ...],
+) -> dict[str, dict[str, float | str]]:
+    """row_ids の点数だけで、売り場ごとの混ぜ方を決める。"""
+    families = pd.Series(_family_of(blend).to_numpy(), index=blend[ROW_ID].to_numpy())
+    recipes: dict[str, dict[str, float | str]] = {}
+    for family in sorted({str(item) for item in families.unique()}):
+        rows = set(blend.loc[families.to_numpy() == family, ROW_ID].to_numpy()) & row_ids
+        if not rows:
+            continue
+        options: dict[tuple[str, float], float] = {}
+        base = blend[blend[ROW_ID].isin(rows)]
+        options[("", 0.0)] = score_against(base, val)
+        for name, frame in specialists.items():
+            part = frame[frame[ROW_ID].isin(rows)]
+            for share in shares:
+                options[(name, share)] = score_against(_log_mix(base, part, share), val)
+        best_name, best_share = min(options, key=lambda item: options[item])
+        recipes[family] = {"model": best_name, "share": float(best_share)}
+    return recipes
+
+
+def _apply_family_mix(
+    frame: pd.DataFrame,
+    specialists: dict[str, pd.DataFrame],
+    recipes: dict[str, dict[str, float | str]],
+) -> pd.DataFrame:
+    out = frame.copy()
+    fam = pd.Series(_family_of(out).to_numpy(), index=out[ROW_ID].to_numpy())
+    for family, recipe in recipes.items():
+        share = float(recipe["share"])
+        name = str(recipe["model"])
+        if share <= 0 or name not in specialists:
+            continue
+        rows = set(out.loc[fam.to_numpy() == family, ROW_ID].to_numpy())
+        if not rows:
+            continue
+        part = out[out[ROW_ID].isin(rows)]
+        mixed = _log_mix(part, specialists[name][specialists[name][ROW_ID].isin(rows)], share)
+        index = out[ROW_ID].isin(mixed[ROW_ID])
+        out.loc[index, PRED] = mixed.set_index(ROW_ID).loc[out.loc[index, ROW_ID], PRED].to_numpy()
+    return out
+
+
+def mix_specialists_by_family(
+    blend: pd.DataFrame,
+    specialists: dict[str, pd.DataFrame],
+    val: pd.DataFrame,
+    halves: tuple[set[Any], set[Any]],
+    shares: tuple[float, ...] = (0.1, 0.2, 0.35, 0.5),
+) -> tuple[pd.DataFrame, dict[str, dict[str, float | str]], float]:
+    """困っている売り場だけ、完成した混合へ古典手法などを少し足す。
+
+    顔ぶれの再探索はしない。売り場ごとに「混ぜない」と「どのモデルを何割足すか」を
+    見ていない系列で選ぶ。出荷用の混ぜ方は全行で決め、採点は選びに使っていない半面で行う。
+    """
+    hold_total = 0.0
+    n_dir = 0
+    for fit_ids, hold_ids in (halves, (halves[1], halves[0])):
+        recipes = _family_mix_recipes(blend, specialists, val, fit_ids, shares)
+        held = _apply_family_mix(blend[blend[ROW_ID].isin(hold_ids)], specialists, recipes)
+        hold_total += score_against(held, val)
+        n_dir += 1
+    recipes = _family_mix_recipes(blend, specialists, val, set(blend[ROW_ID].to_numpy()), shares)
+    holdout = hold_total / n_dir if n_dir else score_against(blend, val)
+    return _apply_family_mix(blend, specialists, recipes), recipes, holdout
+
+
 def snap_small_to_zero(pred: pd.DataFrame, threshold: float) -> pd.DataFrame:
     """小さすぎる予測を0にする。売れない日が多い系統では、迷ったら0の方が罰が軽い。
 

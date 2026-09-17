@@ -89,6 +89,7 @@ const SHORT: Record<string, string> = {
   "statistical-diversity-v1": "古い手法も混ぜる",
   "promo-context-v1": "全店の特売の強さ",
   "family-lineups-v1": "売り場ごとに顔ぶれを変える",
+  "peer-revive-v1": "地域モデルを戻す",
   "foundation-blend-v1": "最初の提出",
 };
 

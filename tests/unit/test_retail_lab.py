@@ -321,6 +321,27 @@ def test_choose_blend_can_pick_a_different_lineup_per_family():
     assert weights["A"].get("b_specialist", 0.0) < 0.05
 
 
+def test_mix_specialists_by_family_only_mixes_where_it_helps():
+    """当たる売り場にだけ古典手法を足し、当たっている売り場はいじらない。"""
+    preds, truth = _family_panel_preds()
+    blend = preds["early"].copy()
+    specialist = blend.copy()
+    families = specialist["series_id"].str.split("::").str[-1]
+    specialist["pred"] = np.where(families.to_numpy() == "C", TOY_TRUTH["C"], specialist["pred"])
+    halves = blending.series_halves({"blend": blend})
+
+    mixed, recipes, holdout = blending.mix_specialists_by_family(
+        blend, {"c_spec": specialist}, truth, halves
+    )
+
+    assert recipes["C"]["model"] == "c_spec"
+    assert float(recipes["C"]["share"]) > 0
+    assert float(recipes["A"]["share"]) == 0
+    c_rows = mixed["series_id"].astype(str).str.endswith("::C")
+    assert mixed.loc[c_rows, "pred"].mean() > blend.loc[c_rows, "pred"].mean()
+    assert holdout > 0
+
+
 def test_cross_fold_rule_scores_judges_both_rules_on_rows_it_did_not_select_on():
     """顔ぶれの選び方そのものを、選択に使っていない行で比べる。"""
     preds, truth = _family_panel_preds(noise=0.05)
