@@ -122,9 +122,23 @@ GitHub Pages には載せられません。理由は次のとおりです。
 | GitHub Codespaces | ブラウザから同じ `npm run dev` | 可。GitHub 上の開発環境でローカルサーバ相当を起動する |
 | Vercel など | 画面の常時公開 | 画面だけなら可。公式データ・予測・提出は別プロセスのまま |
 
-GitHub Pages 向けに静的書き出しすると、概要と実験年表の読み物にはなりますが、
-「予測を実行」「Runのロールバック」「Kaggle提出」は動きません。常時デモが必要なら
-画面を Vercel に載せ、実験本体は手元または Codespaces で回す形になります。
+GitHub ### スマホから読む（読み物版を Pages に置く）
+
+読み物だけの `/report` を用意しました。実験の年表・採否・学びはここに全部入っていて、
+外部に出しても困るものは読みません。手元では `npm run dev` のあと
+http://127.0.0.1:43123/report で確認できます。
+
+```bash
+npm run build:report   # out/ に静的サイトを書き出す
+```
+
+`scripts/build-static-report.mjs` は作業コピーから API ルートを外してから書き出すので、
+元のアプリはそのままです。GitHub Pages への公開は `.github/workflows/pages.yml` が行います。
+初回だけリポジトリの Settings → Pages で Source を **GitHub Actions** にしてください。
+`main` への push で自動更新され、Actions タブから手動実行もできます。
+
+「予測を実行」「Runのロールバック」「Kaggle提出」は読み物版には載りません。これらを
+ブラウザから使いたい場合は、画面を Vercel に載せるか、Codespaces で開発サーバーを動かします。
 
 ## ファイル構成
 
