@@ -359,6 +359,18 @@ def test_tune_family_floors_snaps_only_the_sparse_family():
     assert holdout < blending.score_against(blend, truth)
 
 
+def test_halves_score_is_the_baseline_for_postprocess_on_a_finished_blend():
+    """後処理の点数は、混ぜ方の模擬試験ではなく、同じ予測の左右平均と比べる。"""
+    preds, truth = _family_panel_preds()
+    blend = preds["early"].copy()
+    halves = blending.series_halves({"blend": blend})
+    baseline = blending.halves_score(blend, truth, halves)
+    _tuned, _recipes, holdout = blending.tune_family_floors(blend, truth, halves, floors=(0.0, 5.0))
+    # 当たっている予測を大きく切ると悪化する。基準は完成予測の左右平均。
+    assert holdout >= baseline - 1e-12
+
+
+
 def test_cross_fold_rule_scores_judges_both_rules_on_rows_it_did_not_select_on():
     """顔ぶれの選び方そのものを、選択に使っていない行で比べる。"""
     preds, truth = _family_panel_preds(noise=0.05)

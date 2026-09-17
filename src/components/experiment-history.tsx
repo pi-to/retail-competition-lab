@@ -91,6 +91,7 @@ const SHORT: Record<string, string> = {
   "family-lineups-v1": "売り場ごとに顔ぶれを変える",
   "peer-revive-v1": "地域モデルを戻す",
   "specialist-family-mix-v1": "困っている棚へ後付け",
+  "family-guards-v1": "全体版へ戻して0切り",
   "foundation-blend-v1": "最初の提出",
 };
 
@@ -385,10 +386,10 @@ export function ExperimentHistory({
                             )}
                           </TableCell>
                           <TableCell className="text-right font-mono">
-                            {(run.holdout_rmsle ?? run.local_rmsle).toFixed(4)}
+                            {(run.holdout_rmsle ?? run.local_rmsle).toFixed(5)}
                             {run.leaderboard !== null ? (
                               <span className="block text-xs text-muted-foreground">
-                                本番 {run.leaderboard.toFixed(4)}
+                                本番 {run.leaderboard.toFixed(5)}
                               </span>
                             ) : null}
                           </TableCell>

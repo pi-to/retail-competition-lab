@@ -389,6 +389,19 @@ def tune_family_floors(
     return _apply_family_floors(blend, recipes), recipes, holdout
 
 
+def halves_score(
+    pred: pd.DataFrame, actual: pd.DataFrame, halves: tuple[set[Any], set[Any]]
+) -> float:
+    """完成した予測を、系列の左右で分けて採点した平均。後処理の比較基準。"""
+    left, right = halves
+    if not left or not right:
+        return score_against(pred, actual)
+    return (
+        score_against(pred[pred[ROW_ID].isin(left)], actual)
+        + score_against(pred[pred[ROW_ID].isin(right)], actual)
+    ) / 2.0
+
+
 def snap_small_to_zero(pred: pd.DataFrame, threshold: float) -> pd.DataFrame:
     """小さすぎる予測を0にする。売れない日が多い系統では、迷ったら0の方が罰が軽い。
 
