@@ -300,9 +300,11 @@ def _apply_family_mix(
         if not rows:
             continue
         part = out[out[ROW_ID].isin(rows)]
-        mixed = _log_mix(part, specialists[name][specialists[name][ROW_ID].isin(rows)], share)
+        other = specialists[name][specialists[name][ROW_ID].isin(rows)]
+        mixed = _log_mix(part, other, share)
         index = out[ROW_ID].isin(mixed[ROW_ID])
-        out.loc[index, PRED] = mixed.set_index(ROW_ID).loc[out.loc[index, ROW_ID], PRED].to_numpy()
+        aligned = mixed.set_index(ROW_ID).loc[out.loc[index, ROW_ID], PRED]
+        out.loc[index, PRED] = aligned.to_numpy()
     return out
 
 
