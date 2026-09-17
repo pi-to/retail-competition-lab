@@ -79,12 +79,16 @@ def last_year_fit_predict(
     *,
     level_window: int = LEVEL_WINDOW,
     smooth_days: int = 3,
+    max_lift: float = 6.0,
 ) -> tuple[pd.DataFrame, list[dict[str, float | str]]]:
-    """1年前の同じ日付を、いまの水準に合わせ直して出す。
+    """去年の同じ日から「山の形」だけを借り、水準はいまのものを使う。
 
     提出期間は8月後半で、新学期の文具のように暦でしか説明できない山がある。
     直近の履歴だけを見るモデルはこの山を知らないが、去年の同じ日なら知っている。
-    去年からの伸び縮みは、両方の年の同じ長さの直近平均の比で合わせる。
+
+    去年の売上をそのまま出すと、たまにしか売れない棚では0が並んでしまう。そこで
+    去年の値は「去年の平常時の何倍か」という倍率にしてから、いまの水準へ掛ける。
+    去年の履歴が無い系列では倍率が1に近づき、直近の水準がそのまま残る。
 
     `future[TARGET]` は読まない。去年の実績と学習期間の水準だけを使う。
     """
@@ -100,7 +104,6 @@ def last_year_fit_predict(
 
     now_level = window_mean(last_day)
     then_level = window_mean(last_day - pd.Timedelta(days=365))
-    ratio = ((now_level + 1.0) / (then_level.reindex(now_level.index) + 1.0)).clip(0.25, 4.0)
 
     daily = history.set_index([SERIES_ID, DATE])[TARGET]
     out = future[[ROW_ID, DATE, SERIES_ID]].copy()
@@ -121,13 +124,21 @@ def last_year_fit_predict(
     known = ~np.isnan(window).all(axis=1)
     if known.any():
         last_year[known] = np.nanmedian(window[known], axis=1)
-    scale = out[SERIES_ID].astype(str).map(ratio).to_numpy(dtype=float)
-    fallback = out[SERIES_ID].astype(str).map(now_level).to_numpy(dtype=float)
-    values = np.where(np.isfinite(last_year), last_year * np.nan_to_num(scale, nan=1.0), fallback)
-    out["pred"] = np.clip(np.nan_to_num(values, nan=0.0), 0.0, None)
+
+    series = out[SERIES_ID].astype(str)
+    level = series.map(now_level).to_numpy(dtype=float)
+    base = series.map(then_level).to_numpy(dtype=float)
+    # 「去年の平常時の何倍だったか」。去年の履歴が無ければ 1 倍、つまり水準そのまま。
+    factor = np.where(
+        np.isfinite(last_year) & np.isfinite(base),
+        (last_year + 1.0) / (np.nan_to_num(base, nan=0.0) + 1.0),
+        1.0,
+    )
+    factor = np.clip(factor, 1.0 / max_lift, max_lift)
+    out["pred"] = np.clip(np.nan_to_num(level, nan=0.0) * factor, 0.0, None)
     ranked: list[dict[str, float | str]] = [
-        {"feature": "same_day_last_year", "gain": 1.0},
-        {"feature": f"level_ratio_{level_window}", "gain": 0.6},
+        {"feature": "same_day_last_year_lift", "gain": 1.0},
+        {"feature": f"level_mean_{level_window}", "gain": 0.8},
         {"feature": f"median_window_{smooth_days}", "gain": 0.3},
     ]
     return out[OUTPUT], ranked

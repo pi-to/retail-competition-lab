@@ -869,7 +869,7 @@ def test_last_year_forecast_finds_a_calendar_spike_the_recent_history_cannot_see
     assert set(first.columns) == {"row_id", "date", "series_id", "pred"}
     spike = first[pd.to_datetime(first["date"]).dt.day >= 17]
     assert spike["pred"].min() > 50.0
-    assert {str(item["feature"]) for item in ranked} >= {"same_day_last_year"}
+    assert {str(item["feature"]) for item in ranked} >= {"same_day_last_year_lift"}
 
 
 def test_last_year_forecast_falls_back_to_the_recent_level_without_a_year_of_history():
