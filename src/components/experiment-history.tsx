@@ -36,6 +36,7 @@ import {
   type ExperimentInsight,
   type SubmitAction,
 } from "@/lib/competitions/store-sales-experiments";
+import { submissionHref } from "@/lib/submission";
 
 type Run = {
   run_id: string;
@@ -119,7 +120,7 @@ export function ExperimentHistory({
   const [history, setHistory] = useState(initial);
   const [pending, setPending] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const insight = ranked.find((item) => item.id === selected) ?? rec.experiment;
+  const championId = history.tags.champion;
 
   const milestones = ranked.filter(isMilestone);
   const visible = showAll ? ranked : milestones;
@@ -276,7 +277,7 @@ export function ExperimentHistory({
             <CardTitle className="text-base">実験の一覧</CardTitle>
             <CardDescription>
               行を押すと下に一言だけ出ます。点数は「混ぜ方を決めていない店」で採点。
-              「売り場ごとに顔ぶれを変える」より前の行は、全売り場で同じ顔ぶれだった頃の点数です。
+              CSVはどれも混ぜた提出用予測です。単体モデルの予測ではありません。
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
@@ -287,6 +288,7 @@ export function ExperimentHistory({
                     <TableHead className="w-28">提出</TableHead>
                     <TableHead className="w-20 text-right">点数</TableHead>
                     <TableHead>やったこと</TableHead>
+                    <TableHead className="w-36">CSV</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -321,6 +323,13 @@ export function ExperimentHistory({
                       <TableCell className="max-w-xl whitespace-normal py-2 text-sm font-medium">
                         {SHORT[item.id] ?? item.title}
                       </TableCell>
+                      <TableCell onClick={(event) => event.stopPropagation()}>
+                        <CsvLink
+                          competition={competition}
+                          item={item}
+                          current={item.runId != null && item.runId === championId}
+                        />
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -339,14 +348,15 @@ export function ExperimentHistory({
           </CardContent>
         </Card>
 
-        <InsightDetail insight={insight} />
+        <InsightDetail insight={insight} competition={competition} championId={championId} />
       </TabsContent>
 
       <TabsContent value="runs" className="mt-3 flex flex-col gap-3">
         <Alert>
           <AlertTitle>前の版にいつでも戻せます</AlertTitle>
           <AlertDescription>
-            提出用CSVはいま選ばれている1本だけ。悪くなったら押すだけで戻せます。
+            各行のCSVは、その実験で混ぜた提出用予測です。いまKaggleへ送るのは Champion
+            の1本だけ。悪くなったら押すだけで戻せます。
           </AlertDescription>
         </Alert>
         {message ? <p className="text-sm text-muted-foreground">{message}</p> : null}
@@ -364,6 +374,7 @@ export function ExperimentHistory({
                       <TableHead>提出CSV</TableHead>
                       <TableHead className="text-right">点数</TableHead>
                       <TableHead>実験</TableHead>
+                      <TableHead className="w-28">CSV</TableHead>
                       <TableHead></TableHead>
                     </TableRow>
                   </TableHeader>
@@ -398,6 +409,20 @@ export function ExperimentHistory({
                             <span className="block font-mono text-xs text-muted-foreground">
                               {run.created_at.slice(0, 16).replace("T", " ")}
                             </span>
+                          </TableCell>
+                          <TableCell>
+                            <Button asChild size="sm" variant={isChampion ? "default" : "outline"}>
+                              <a
+                                href={submissionHref({
+                                  competition,
+                                  runId: run.run_id,
+                                  as: `${competition}-${run.method_version || run.label}`,
+                                })}
+                                download
+                              >
+                                {isChampion ? "落とす（いま送る版）" : "落とす"}
+                              </a>
+                            </Button>
                           </TableCell>
                           <TableCell>
                             {pending === run.run_id ? (
@@ -448,12 +473,22 @@ export function ExperimentHistory({
   );
 }
 
-function InsightDetail({ insight }: { insight: ExperimentInsight }) {
+function InsightDetail({
+  insight,
+  competition,
+  championId,
+}: {
+  insight: ExperimentInsight;
+  competition: string;
+  championId?: string;
+}) {
+  const name = SHORT[insight.id] ?? insight.title;
+  const current = insight.runId != null && insight.runId === championId;
   return (
     <Card size="sm">
       <CardHeader className="pb-2">
         <CardTitle className="flex flex-wrap items-center gap-2 text-sm">
-          {SHORT[insight.id] ?? insight.title}
+          {name}
           <Badge variant={ACTION_VARIANT[insight.submitAction]}>
             {SUBMIT_LABEL[insight.submitAction]}
           </Badge>
@@ -476,7 +511,40 @@ function InsightDetail({ insight }: { insight: ExperimentInsight }) {
           <span className="font-medium text-foreground">学び：</span>
           {insight.learned}
         </p>
+        <div className="pt-1">
+          <CsvLink competition={competition} item={insight} current={current} />
+        </div>
       </CardContent>
     </Card>
+  );
+}
+
+function CsvLink({
+  competition,
+  item,
+  current,
+}: {
+  competition: string;
+  item: ExperimentInsight;
+  current: boolean;
+}) {
+  const name = SHORT[item.id] ?? item.title;
+  if (!item.runId) {
+    return <span className="text-xs text-muted-foreground">単体なのでCSVなし</span>;
+  }
+  return (
+    <Button asChild size="sm" variant={current ? "default" : "outline"}>
+      <a
+        href={submissionHref({
+          competition,
+          runId: item.runId,
+          as: `${competition}-${item.id}`,
+        })}
+        download
+        aria-label={`${name}の提出CSVをダウンロード`}
+      >
+        {current ? "いま送る版を落とす" : "落とす"}
+      </a>
+    </Button>
   );
 }

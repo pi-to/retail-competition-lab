@@ -29,6 +29,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { submitRecommendation } from "@/lib/competitions/store-sales-experiments";
+import { submissionHref } from "@/lib/submission";
 import type { Result } from "@/lib/types";
 
 type Receipt = {
@@ -146,9 +147,22 @@ export function SubmitCard({ result }: { result: Result }) {
         <Alert>
           <AlertTitle>{rec.headline}</AlertTitle>
           <AlertDescription>
-            このボタンが送るのは Champion の CSV です。公開LB 0.39515 の古い混合ではありません。
+            このボタンが送るのは「{rec.experiment.title}」の混ぜた提出CSVです。公開LB 0.39515
+            の古い混合ではありません。単体モデルの予測でもありません。
           </AlertDescription>
         </Alert>
+        <Button asChild variant="outline">
+          <a
+            href={submissionHref({
+              competition: result.competition,
+              runId: rec.experiment.runId,
+              as: `${result.competition}-${rec.experiment.id}`,
+            })}
+            download
+          >
+            「{rec.experiment.title}」の提出CSVを落とす
+          </a>
+        </Button>
         {!confirming ? (
           <Button onClick={() => void review()} disabled={!ready}>
             {result.source === "kaggle" ? "提出内容を確認" : "公式データで再計算してください"}
@@ -373,9 +387,13 @@ export function SubmitCard({ result }: { result: Result }) {
                     </a>
                     <a
                       className="underline"
-                      href={`/api/submission?competition=${result.competition}`}
+                      href={submissionHref({
+                        competition: result.competition,
+                        runId: rec.experiment.runId,
+                        as: `${result.competition}-${rec.experiment.id}`,
+                      })}
                     >
-                      CSVを落として手で提出する
+                      「{rec.experiment.title}」のCSVを落として手で提出する
                     </a>
                   </span>
                 </AlertDescription>

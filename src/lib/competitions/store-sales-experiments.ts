@@ -530,6 +530,7 @@ export const STORE_SALES_EXPERIMENTS: ExperimentInsight[] = [
     leaderboard: 0.39515,
     outcome: "採用",
     submitAction: "already_submitted",
+    runId: "20260916-foundation-blend-v1",
     tried: "Chronos-2を直近540日に絞り、LightGBMとlog空間の非負最小二乗で混ぜた。",
     result: "ローカル0.4000、公開LB 0.39515。差は0.005で、ローカル検証が本番をよく再現した。",
     why: "Chronos-2が系列形状と未来共変量を捉え、LightGBMが店舗・商品カテゴリの横断効果を補ったと考える。",
